@@ -106,14 +106,19 @@ struct Scaler {
 	static constexpr int W = 128, H = 115;
 	using Rows = uint32_t[5][W]; // a group of 5 source lines, each filtered horizontally
 
-	// Stage 1, per source line: palette[pixel & mask] is the RGB565 colour of a pixel (the 12 colours
-	// of dmgColors with mask 0x33 for original Game Boy games, Walnut-CGB's 64-entry fixPalette with
-	// mask 0x3F for Game Boy Color ones); the line is filtered horizontally into row (weights add up
-	// to 5), its place in the group being y % 5.
-	static void filter(const uint8_t* pixels, const uint16_t* palette, uint8_t mask, uint32_t* row){
-		for(int k = 0; k < LCD_WIDTH / 5; k++, pixels += 5, row += 4){
+	// Per source line, as it is drawn: palette[pixel & mask] is the RGB565 colour of a pixel (the 12
+	// colours of dmgColors with mask 0x33 for original Game Boy games, Walnut-CGB's 64-entry
+	// fixPalette with mask 0x3F for Game Boy Color ones, which a game may change between lines).
+	static void colours(const uint8_t* pixels, const uint16_t* palette, uint8_t mask, uint16_t* line){
+		for(int x = 0; x < LCD_WIDTH; x++) line[x] = palette[pixels[x] & mask];
+	}
+
+	// Stage 1: a line of colours filtered horizontally into row (weights add up to 5); its place in
+	// the group is y % 5.
+	static void filter(const uint16_t* line, uint32_t* row){
+		for(int k = 0; k < LCD_WIDTH / 5; k++, line += 5, row += 4){
 			uint32_t p[5];
-			for(int i = 0; i < 5; i++) p[i] = spread(palette[pixels[i] & mask]);
+			for(int i = 0; i < 5; i++) p[i] = spread(line[i]);
 			row[0] = 4 * p[0] + p[1];
 			row[1] = 3 * p[1] + 2 * p[2];
 			row[2] = 2 * p[2] + 3 * p[3];
@@ -122,7 +127,8 @@ struct Scaler {
 	}
 
 	// Output rows a group yields once source line y is in: 4 at its 5th line, 3 at line 143 (lines
-	// 140..143: the 4th row would need line 144), otherwise 0. They are output rows y / 5 * 4 on.
+	// 140..143: the 4th row would need line 144), otherwise 0. They are output rows y / 5 * 4 on, and
+	// need the group's first n + 1 lines.
 	static int rowsDone(unsigned y){ return y % 5 == 4 ? 4 : y == LCD_HEIGHT - 1 ? 3 : 0; }
 
 	// Stage 2: a group's rows into n consecutive output rows of W pixels at out. Swap: byte-swapped,
@@ -140,10 +146,12 @@ struct Scaler {
 		}
 	}
 
-	// Both stages in one go, into out (the PC tools; the firmware runs stage 2 on its other core).
+	// All of it in one go, into out (the PC tools; the firmware runs both stages on its other core).
 	uint16_t out[H][W] = {};
 	void line(const uint8_t* pixels, unsigned y, const uint16_t* palette, uint8_t mask){
-		filter(pixels, palette, mask, rows[y % 5]);
+		uint16_t c[LCD_WIDTH];
+		colours(pixels, palette, mask, c);
+		filter(c, rows[y % 5]);
 		if(const int n = rowsDone(y)) emit(rows, n, out[y / 5 * 4]);
 	}
 

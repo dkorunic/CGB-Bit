@@ -87,12 +87,12 @@ static_assert(stateSize(0x20000) <= StatePartSize, "the state partition must hol
 static const esp_partition_t* statePart; // null: no resume
 static bool running; // a game is running: shutdown() suspends it
 
-// The scaler's two stages on the two cores. drawLine (core 0, with the emulator) filters each line
-// horizontally into a slot of the ring; each finished group of 5 lines goes to scaleTask (core 1),
-// which writes its output rows straight into the frame buffer, in panel byte order. Slots are
-// taken and freed in order: ringFree counts the free ones.
+// The scaler on the other core. drawLine (core 0, with the emulator) only turns each line into
+// colours, in a slot of the ring (the palette may change between lines); each finished group of 5
+// lines goes to scaleTask (core 1), which filters it and writes its output rows straight into the
+// frame buffer, in panel byte order. Slots are taken and freed in order: ringFree counts the free ones.
 static constexpr int RingGroups = 4;
-static Scaler::Rows ring[RingGroups];
+static uint16_t ring[RingGroups][5][LCD_WIDTH];
 struct ScaleJob { uint16_t* out; uint8_t slot, rows; bool last; };
 static QueueHandle_t scaleJobs;
 static SemaphoreHandle_t ringFree, frameScaled; // frameScaled: the frame's last group is done
@@ -101,11 +101,13 @@ static bool frameSent; // this frame's last group went to scaleTask
 static std::atomic<uint32_t> scaleBusyUs;
 
 static void scaleTask(void*){
+	static Scaler::Rows rows;
 	ScaleJob j;
 	while(true){
 		xQueueReceive(scaleJobs, &j, portMAX_DELAY);
 		const int64_t start = esp_timer_get_time();
-		Scaler::emit<true>(ring[j.slot], j.rows, j.out);
+		for(int i = 0; i <= j.rows; i++) Scaler::filter(ring[j.slot][i], rows[i]);
+		Scaler::emit<true>(rows, j.rows, j.out);
 		scaleBusyUs += esp_timer_get_time() - start;
 		xSemaphoreGive(ringFree);
 		if(j.last) xSemaphoreGive(frameScaled);
@@ -459,8 +461,8 @@ static void drawLine(gb_s* g, const uint8_t* pixels, const uint_fast8_t y){
 		nextSlot = (nextSlot + 1) % RingGroups;
 	}
 	// Game Boy Color: the game's colours; original games: shade and layer (OBJ0, OBJ1, BG)
-	if(g->cgb.cgbMode) Scaler::filter(pixels, g->cgb.fixPalette, 0x3F, ring[ringSlot][y % 5]);
-	else Scaler::filter(pixels, dmgPalette, 0x33, ring[ringSlot][y % 5]);
+	if(g->cgb.cgbMode) Scaler::colours(pixels, g->cgb.fixPalette, 0x3F, ring[ringSlot][y % 5]);
+	else Scaler::colours(pixels, dmgPalette, 0x33, ring[ringSlot][y % 5]);
 	if(const int rows = Scaler::rowsDone(y)){
 		const ScaleJob j = { frame + (Top + y / 5 * 4) * Screen, (uint8_t) ringSlot, (uint8_t) rows, y == LCD_HEIGHT - 1 };
 		xQueueSend(scaleJobs, &j, portMAX_DELAY);

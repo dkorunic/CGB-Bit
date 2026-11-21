@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CGB-Bit: ESP-IDF firmware (ESP32-S3, no PSRAM, 512 KB SRAM, 8 MB flash) that runs Game Boy and Game
 Boy Color games on a CircuitMess Bit, using the Walnut-CGB emulator (git submodule `walnut-cgb/`,
-never edited in place; see "Walnut-CGB patches"). README.md covers features, controls and flashing for users.
+never edited in place; see "Walnut-CGB patches"). README.md covers features, controls and flashing
+for users.
 
 ## Commands
 
@@ -12,10 +13,10 @@ Firmware (ESP-IDF 5.x; tested with v5.4.1 in `~/esp/esp-idf`):
 
 ```shell
 . ~/esp/esp-idf/export.sh
-idf.py build                               # GB_ROM defaults to roms/tobudx.gb
-idf.py -DGB_ROM=path/game.gbc build        # another bundled game (≤ 4 MB; relative to the project dir)
-idf.py -p /dev/ttyACM0 flash monitor       # monitor prints "CPU load: N%" every second
-idf.py merge-bin -o cgb-bit-merged.bin     # -> build/cgb-bit-merged.bin, the release image
+idf.py build                           # GB_ROM defaults to roms/tobudx.gb
+idf.py -DGB_ROM=path/game.gbc build    # another bundled game (≤ 4 MB; relative to the project dir)
+idf.py -p /dev/ttyACM0 flash monitor   # prints "CPU load: N% (scaler on core 1: M%)" every second
+idf.py merge-bin -o cgb-bit-merged.bin # -> build/cgb-bit-merged.bin, the release image
 ```
 
 `GB_ROM` is a CMake cache variable: an existing `build/` keeps the old path (delete `build/` if it
@@ -31,21 +32,26 @@ tools/make_demo.sh                   # regenerates demo.gif (needs Pillow)
 web/build.sh <out dir> build/cgb-bit-merged.bin <version>   # assemble the installer site
 ```
 
-The smoke test's unit checks (`testScaler`, `testApu`, `testRom`, `testSaves`, `testCartRam`, `testDmgColors`, `testMenu` in
-`tools/smoke_test.cpp`) all run on every invocation; there is no per-check selection. After the
-emulated minute it also round-trips a save state into a fresh `gb_s` and checks 600 more frames
-match exactly.
+The smoke test's unit checks (`testScaler`, `testApu`, `testRom`, `testSaves`, `testCartRam`,
+`testDmgColors`, `testMenu` in `tools/smoke_test.cpp`) all run on every invocation; there is no
+per-check selection. After the emulated minute it also round-trips a save state into a fresh
+`gb_s` and checks that 600 more frames match exactly (picture, sound, cartridge RAM).
 
 ## Architecture
 
-- `main/frontend.h`: all emulator-facing logic with no ESP-IDF dependency (the box-filter `Scaler`,
-  the `ToneApu` sound tracker, the `MenuButton` Start/Select logic, `dmgColors`, the save-state helpers). It is shared
-  by the firmware and both PC tools, so a change here is exercised by the smoke test and shows up in
-  the demo GIF. Include `walnut_cgb.h` before it.
+- `main/frontend.h`: all emulator-facing logic with no ESP-IDF dependency: the box-filter
+  `Scaler`, the `ToneApu` sound tracker, the `MenuButton` Start/Select logic, `Rom`, the battery
+  save slots (`SaveHeader`, `storeSlot`, `newestSave`), `dmgColors`, the save-state helpers
+  (`StateHeader`, `stateParts`, `loadState`). It is shared by the firmware and both PC tools, so a
+  change here is exercised by the smoke test and shows up in the demo GIF. Include `walnut_cgb.h`
+  before it.
 - `main/main.cpp`: everything hardware: Bit pins (two revisions, chosen by the efuse revision),
-  ST7735S via LovyanGFX with double-buffered DMA, buzzer and backlight on LEDC, battery ADC,
-  deep-sleep shutdown, save storage, frame pacing (16,743 µs per frame). The Bit hardware code is
-  carried over from the sibling Anarch-Bit project; keep the two consistent when fixing it.
+  ST7735S via LovyanGFX with double-buffered DMA, the scaler task on core 1, buzzer and backlight
+  on LEDC, battery ADC, deep-sleep shutdown, battery saves and suspend/resume, frame pacing
+  (16,743 µs per frame). The Bit hardware code is carried over from the sibling Anarch-Bit
+  project; keep the two consistent when fixing it.
+- `main/cgb_palettes.h`: generated from SameBoy's `BootROMs/cgb_boot.asm` (Expat licence, credited
+  in README); regenerate rather than edit.
 - `tools/smoke_test.cpp` and `tools/demo.cpp` duplicate the firmware's small Walnut-CGB callbacks
   (`drawLine`, the ROM readers, which wrap `frontend.h`'s `Rom`); keep them in step with main.cpp.
 
@@ -58,8 +64,9 @@ provenance header; the upstream file has CRLF line endings, so the diffs do too 
 byte-exact). Current: `01-mbc2-cart-ram.diff` (PR #7, MBC2 RAM zeroed by `gb_init` because MBC2
 headers declare RAM size 0) and `02-mbc5-rumble-cart-ram.diff` (PR #8, `cart_ram[]` wrong for
 0x1D/0x1E and the rumble motor bit 3 selecting RAM banks 8..15). `testCartRam` runs tiny
-hand-assembled ROMs for both and fails without the patches. When upstream merges a PR: bump the
-submodule, delete the patch (and the patches/ mechanism once empty).
+hand-assembled ROMs for both and fails without the patches. Dependabot opens a PR when the
+submodule moves; when upstream has merged a PR, that patch stops applying: bump the submodule,
+delete the patch (and the patches/ mechanism once empty).
 
 Emulator integration (Walnut-CGB specifics):
 - `gb_init` takes 8-, 16- and 32-bit ROM readers, all `frontend.h`'s `Rom`: the ROM is a
@@ -69,24 +76,15 @@ Emulator integration (Walnut-CGB specifics):
 - `drawLine` gets palette indices: in Game Boy Color mode (`gb->cgb.cgbMode`) they index
   `gb->cgb.fixPalette` (64 RGB565 entries, mask 0x3F); otherwise `pixel & 0x33` (shade, plus the
   OBJ0/OBJ1/BG layer of the 12-colour mode) indexes `dmgColors`' table: the Game Boy Color boot
-  ROM's palette for the title (`main/cgb_palettes.h`, generated from SameBoy's `cgb_boot.asm`;
-  regenerate rather than edit). `Scaler::out` is native RGB565; the firmware byte-swaps for the panel.
-- `Scaler` is the hot spot after the emulator (it was half the frame time before it packed R, G, B
-  into one 32-bit word and filtered each line horizontally once). Keep it bit-exact: `demo.gif`'s
-  md5 must not change for a pure speed change. Its two stages run on the two cores in the
-  firmware: `drawLine` (core 0, emulator) runs `Scaler::filter` into a 4-slot ring and queues each
-  finished 5-line group; `scaleTask` (core 1) runs `Scaler::emit<true>` straight into the DMA frame
-  buffer in panel byte order. The main loop pushes a frame only once `frameScaled` says its last
-  group is in (no push while the game has the LCD off). All LCD/SPI calls stay on core 0. The PC
-  tools use `Scaler::line` (both stages, native order); the smoke test checks the split matches.
-  `CPU load` prints core 0's share and the scaler's share on core 1.
+  ROM's palette for the title (Nintendo licensee + title checksum + 4th letter), else its default.
+  Games can change palettes between lines, so colours are resolved per line, in `drawLine`.
+- Sound: `ENABLE_SOUND` routes register reads/writes 0xFF10..0xFF3F to `audio_read`/`audio_write`
+  (backed by `ToneApu`). Walnut-CGB's 16/32-bit reads call `audio_read` for `addr + 1..3`, which
+  can go past 0xFF3F, so `ToneApu` bounds-checks.
 - Save states: Walnut-CGB keeps all mutable state in `gb_s` (its statics are const tables), so a
   state is `gb_s` + `ToneApu` + cartridge RAM (`stateParts`). `loadState` keeps this boot's
   callback pointers; the header carries the firmware's ELF SHA-256, so any rebuild invalidates
   states (gb_s layout, function addresses).
-- Sound: `ENABLE_SOUND` routes register reads/writes 0xFF10..0xFF3F to `audio_read`/`audio_write`
-  (backed by `ToneApu`). Walnut-CGB's 16/32-bit reads call `audio_read` for `addr + 1..3`, which
-  can go past 0xFF3F, so `ToneApu` bounds-checks.
 - `gb_init` indexes its size tables with header bytes 0x148/0x149 unchecked; `Rom::headerOk`
   rejects codes > 8 / > 5 and a missing Nintendo logo first. Keep the firmware checks and
   `web/gb.js`'s checks (logo, checksum, cartridge types from `cart_mbc[]`, sizes) in agreement.
@@ -95,7 +93,45 @@ Emulator integration (Walnut-CGB specifics):
   the declared size. `web/gb.js` returns that size and the page pads; `main/CMakeLists.txt` refuses
   a short `GB_ROM`.
 
-Flash layout (`partitions.csv`) and its coupling:
+Scaler and the two cores: `Scaler` is 160x144 → 128x115, an exact 5:4 box filter per channel, with
+R, G, B packed into one 32-bit word so one multiply weights all three. Keep it bit-exact: for a
+pure speed change `demo.gif`'s md5 must not change. In the firmware, `drawLine` (core 0, with the
+emulator) only runs `Scaler::colours` into a 4-slot ring and queues each finished 5-line group
+(`ScaleJob`); `scaleTask` (pinned to core 1) runs `Scaler::filter` and `Scaler::emit<true>`
+straight into the DMA frame buffer in panel byte order. Slots are taken and freed in order
+(`ringFree` counts free ones). The main loop pushes a frame only once `frameScaled` says its last
+group is in (no push while the game has the LCD off: the screen keeps the last frame); all
+LCD/SPI calls stay on core 0. The PC tools use `Scaler::line` (all stages, native byte order) and
+the smoke test checks that the split matches it.
+
+## Performance
+
+`CPU load` is core 0's busy time per second as a share of the frame budget (over 100% = the game
+runs slow); the second number is `scaleTask` on core 1. Measured on a Bit 3 with Tobu Tobu Girl
+Deluxe, steady play (heaviest stretch in brackets):
+
+| Build | Core 0 | Core 1 |
+|---|---|---|
+| v0.1.0 (scaler: 12 multiplies per pixel) | ~133% (150%) | idle |
+| v0.1.1 (packed channels, horizontal pass once per line) | ~94% (106%) | idle |
+| a3855a8 (vertical pass on core 1) | ~83% (98%) | ~10% |
+| current (whole scaler on core 1, only colour lookup on core 0) | ~77% (90%) | ~22% |
+
+Nearly all that is left on core 0 is the emulator. Already tuned in `sdkconfig.defaults`: 240 MHz,
+`-O2`, QIO flash at 80 MHz, 32 KB instruction / 64 KB data cache. Measure a change on the PC
+first (time the stage in a small harness around `frontend.h`), then on the device.
+
+Tried and not kept: running the emulator's hot code from internal RAM. ~43 KB (`__gb_step_cpu`
+alone is 30 KB; `gb_run_frame_dualfetch` is inlined into `app_main`) gave ~73% (87%), i.e. 4-5
+points, for ~45 KB of internal RAM (heap left for cartridge RAM: 131 KB → 86 KB). Walnut-CGB has
+no attribute hook, and an ESP-IDF linker fragment can't target `libmain.a` (ldgen fails to parse
+the `LINK_ONCE_DISCARD` flag of the C++ COMDAT groups), so it was done in a `PRE_LINK` step: objcopy
+renamed the functions' `.text.F`/`.literal.F` sections in `main.cpp.obj` to `.iram1.F` and
+`.iram1.F.literal`, exactly the names `IRAM_ATTR` produces. Worth revisiting if a game needs the
+headroom.
+
+## Flash layout (`partitions.csv`) and its coupling
+
 - `rom` (data 0x40) at 0x110000, 4 MB: the game, written by `esptool_py_flash_to_partition` in
   `main/CMakeLists.txt` and therefore also inside the merged image.
 - `saves` (data 0x41), 264 KB: two slots of 0x21000, each a header sector (`SaveHeader` in
@@ -108,24 +144,27 @@ Flash layout (`partitions.csv`) and its coupling:
   must match (a static_assert checks the largest state fits). `shutdown()` stores it after
   `saveFlush()` (only once the game runs); the next boot erases the header before loading, so it
   resumes once. A resumed cartridge RAM newer than the battery save is marked dirty and stored.
+  The partition table is in the firmware part (0x8000), so updating with `cgb-bit.bin` alone
+  (0x10000) keeps an older table: no `state` partition, resume off (logged), nothing breaks.
 - The `rom` offset and size are repeated in `web/manifest.json`. `web/build.sh` cuts the merged
   image at that offset into `cgb-bit-firmware.bin` and fails if the bundled ROM isn't found there,
   so moving partitions means updating `web/manifest.json`.
+
+## Browser installer and CI
 
 Browser installer (`web/`): ESP Web Tools 10.4.0, downloaded by `web/build.sh` from npm, checked
 against a pinned SHA-512 and served from the site (no CDN). `"new_install_prompt_erase": true` in
 `web/manifest.json` is essential: CGB-Bit has no Improv Serial, and without it ESP Web Tools erases
 the whole chip on every install (wiping saves, and leaving no firmware after "Replace the game
-only"). For a player's own game the page builds
-a manifest as a `blob:` URL pointing at the picked file ("Replace the game only" = the game at the
-`rom` offset; "Install CGB-Bit with this game" = firmware part + game). `window.gbBit.useFile` is
-exposed for tests.
+only"). For a player's own game the page builds a manifest as a `blob:` URL pointing at the picked
+file ("Replace the game only" = the game at the `rom` offset; "Install CGB-Bit with this game" =
+firmware part + game). `window.gbBit.useFile` is exposed for tests.
 
 CI (`.github/workflows/build.yml`): tests job (smoke test + node test), firmware job in a
 digest-pinned `espressif/idf:v5.4.1` container, and on `v*` tags a release job (the only job with
 `contents: write`) and a GitHub Pages deploy job; the `github-pages` environment must allow `v*`
-tags (README, Development). All actions are pinned to commit SHAs with the
-version in a comment; Dependabot updates them.
+tags (README, Development). All actions are pinned to commit SHAs with the version in a comment;
+Dependabot updates them and the `walnut-cgb` submodule weekly.
 
 ## Conventions
 

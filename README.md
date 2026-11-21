@@ -28,6 +28,7 @@ What the Bit's 128x128 screen shows, at 2x size and 20 FPS: rendered on the PC b
   its palette for that title for Nintendo-published games (Tetris, Super Mario Land, Pokémon...),
   its default (white, green, navy) for all others.
 - **Speed**: real Game Boy speed, 59.73 frames per second, on Walnut-CGB's dual-fetch CPU core.
+  The emulator has one of the ESP32-S3's two cores; the scaling runs on the other.
 - **Sound**: the two square-wave channels, tracked from the game's register writes (frequency,
   trigger, length, volume envelope, master volume), with the loudest one played on the buzzer.
   Melodies and many effects come through; the wave and noise channels (bass, drums) and the sweep
@@ -65,7 +66,9 @@ Every `v*` tag also gets a [release](https://github.com/dkorunic/CGB-Bit/release
 built by CI:
 
 - `cgb-bit-merged.bin`: everything, Tobu Tobu Girl Deluxe included, written at `0x0`.
-- `cgb-bit.bin`: the emulator alone, written at `0x10000`, to update it and keep the game.
+- `cgb-bit.bin`: the emulator alone, written at `0x10000`, to update it and keep the game. Coming
+  from v0.1.0, install once with the browser installer or the merged image instead: resume needs
+  the newer partition table (without it the game just doesn't resume).
 
 With [esptool](https://docs.espressif.com/projects/esptool/) (`pip install esptool`) and the Bit
 connected over USB:
@@ -120,27 +123,30 @@ idf.py -p /dev/ttyACM0 flash monitor
 ```
 
 `idf.py flash` writes the emulator and the game (`roms/tobudx.gb`, or `-DGB_ROM=...`) and keeps
-the save partition. `idf.py monitor` prints `CPU load: N%` every second: emulation and drawing
-time as a share of the Game Boy's frame time.
+the save partition. `idf.py monitor` prints `CPU load: N% (scaler on core 1: M%)` every second:
+the first core's time (emulation, sending frames) as a share of the Game Boy's frame time, which
+must stay under 100% for full speed, then the second core's (scaling).
 
 - `walnut-cgb/`: git submodule, [Mr-PauI/Walnut-CGB](https://github.com/Mr-PauI/Walnut-CGB),
   left untouched. The build copies `walnut_cgb.h` into `build/` and applies `patches/*.diff`:
   cartridge RAM fixes for MBC2 and MBC5+RUMBLE games (upstream PRs
   [#7](https://github.com/Mr-PauI/Walnut-CGB/pull/7) and
-  [#8](https://github.com/Mr-PauI/Walnut-CGB/pull/8); drop each once merged). CGB-Bit runs it with its dual-fetch core (`gb_run_frame_dualfetch`) and 16- and
-  32-bit ROM reads that fall back to bytes when unaligned, as memory-mapped flash requires.
-- `main/frontend.h`: the scaler, the sound tracker and the Menu button, with no ESP-IDF
-  dependencies, so the PC tools use the same code.
+  [#8](https://github.com/Mr-PauI/Walnut-CGB/pull/8); drop each once merged). CGB-Bit runs it
+  with its dual-fetch core (`gb_run_frame_dualfetch`) and 16- and 32-bit ROM reads that fall back
+  to bytes when unaligned, as memory-mapped flash requires.
+- `main/frontend.h`: the scaler, the sound tracker, the Menu button, the save and resume formats
+  and the original-game palettes, with no ESP-IDF dependencies, so the PC tools use the same code.
+- `main/cgb_palettes.h`: the Game Boy Color boot ROM's palette tables, generated from SameBoy.
 
 ## Development
 
-PC tools, needing a C++20 compiler, `patch` and (for the GIF) Python with Pillow, but not ESP-IDF. Run
-them from a normal shell: the ESP-IDF shell's Python has no Pillow.
+PC tools, needing a C++20 compiler, `patch` and (for the GIF) Python with Pillow, but not
+ESP-IDF. Run them from a normal shell: the ESP-IDF shell's Python has no Pillow.
 
-- `tools/smoke_test.sh [game.gbc]`: checks the scaler, the sound tracker, saves, the patched
-  MBC2/rumble cartridge RAM and the Menu button, then
-  plays a minute of the game (default: Tobu Tobu Girl Deluxe, in Game Boy Color mode) under
-  ASan/UBSan.
+- `tools/smoke_test.sh [game.gbc]`: checks the scaler (including the firmware's two-core split),
+  the sound tracker, saves, the patched MBC2/rumble cartridge RAM, the original-game palettes and
+  the Menu button, then plays a minute of the game (default: Tobu Tobu Girl Deluxe, in Game Boy
+  Color mode) under ASan/UBSan and checks a save state resumes into exactly the same game.
 - `tools/make_demo.sh`: regenerates `demo.gif`. The run is scripted in frames for Tobu Tobu Girl
   Deluxe.
 - `web/build.sh <dir> <cgb-bit-merged.bin> <version>`: assembles the browser installer site: the
@@ -173,5 +179,6 @@ gh api -X POST repos/dkorunic/CGB-Bit/environments/github-pages/deployment-branc
 [CC0 1.0](LICENSE) (public domain) for everything in this repository except third-party parts,
 which keep their own licenses: Walnut-CGB (submodule, MIT, derived from Peanut-GB, MIT, with parts
 from SameBoy, MIT), the Game Boy Color palette tables in `main/cgb_palettes.h` (generated from
-SameBoy's `BootROMs/cgb_boot.asm`, Expat/MIT, Copyright (c) 2015-2026 Lior Halphon), Tobu Tobu Girl Deluxe (`roms/tobudx.gb`: code MIT, assets CC BY 4.0, see
-[roms/README.md](roms/README.md)), LovyanGFX (fetched at build time, FreeBSD license).
+SameBoy's `BootROMs/cgb_boot.asm`, Expat/MIT, Copyright (c) 2015-2026 Lior Halphon), Tobu Tobu
+Girl Deluxe (`roms/tobudx.gb`: code MIT, assets CC BY 4.0, see [roms/README.md](roms/README.md)),
+LovyanGFX (fetched at build time, FreeBSD license).
