@@ -134,6 +134,10 @@ those functions' `.text.F`/`.literal.F` sections to `.iram1.F`/`.iram1.F.literal
 `IRAM_ATTR` produces; it fails the build if a listed function is gone (renamed or inlined
 upstream). Check with `xtensa-esp32s3-elf-nm -C build/cgb-bit.elf`: they must be at 0x4037xxxx.
 
+`-DGB_OPT_SIZE=ON` builds main.cpp with `-Os` (an experiment to measure: main.cpp's code 65.3 KB →
+57.1 KB, `__gb_step_cpu` 30.5 KB → 27.3 KB, still near the 32 KB instruction cache). A cache
+variable like `GB_ROM`: it sticks in `build/` until `-DGB_OPT_SIZE=OFF`.
+
 ## Flash layout (`partitions.csv`) and its coupling
 
 - `rom` (data 0x40) at 0x110000, 4 MB: the game, written by `esptool_py_flash_to_partition` in

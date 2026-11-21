@@ -31,3 +31,33 @@ add_custom_command(TARGET ${COMPONENT_LIB} POST_BUILD
     COMMAND sh ${CMAKE_CURRENT_LIST_DIR}/../tools/iram_hot.sh ${CMAKE_OBJCOPY} ${CMAKE_OBJDUMP}
         $<TARGET_FILE:${COMPONENT_LIB}> ${WALNUT_IRAM}
     VERBATIM)
+
+# Experiment: the emulator built for size (-Os) instead of speed (-O2), measured on the device with
+# idf.py -DGB_OPT_SIZE=ON build (a cache variable: -DGB_OPT_SIZE=OFF to go back).
+option(GB_OPT_SIZE "Build main.cpp (the emulator) with -Os" OFF)
+if(GB_OPT_SIZE)
+    set_source_files_properties(main.cpp PROPERTIES COMPILE_OPTIONS -Os)
+endif()
+
+# The game written to the rom partition by `idf.py flash` (and in the merged image):
+# idf.py -DGB_ROM=path/to/game.gbc build (a relative path is taken from the project directory)
+set(GB_ROM ${CMAKE_CURRENT_LIST_DIR}/../roms/tobudx.gb CACHE STRING "Game Boy ROM flashed to the rom partition")
+get_filename_component(GB_ROM_PATH "${GB_ROM}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+if(NOT EXISTS ${GB_ROM_PATH})
+    message(FATAL_ERROR "GB_ROM ${GB_ROM_PATH} not found")
+endif()
+file(SIZE ${GB_ROM_PATH} GB_ROM_SIZE)
+if(GB_ROM_SIZE GREATER 4194304)
+    message(FATAL_ERROR "GB_ROM is ${GB_ROM_SIZE} bytes, the rom partition holds 4 MB")
+endif()
+# The firmware reads up to the ROM size the header declares: a shorter file would leave the previous
+# game's bytes after it in the partition.
+file(READ ${GB_ROM_PATH} GB_ROM_SIZE_CODE OFFSET 328 LIMIT 1 HEX) # header byte 0x148
+math(EXPR GB_ROM_SIZE_CODE "0x${GB_ROM_SIZE_CODE}")
+if(GB_ROM_SIZE_CODE LESS_EQUAL 8)
+    math(EXPR GB_ROM_DECLARED "32768 << ${GB_ROM_SIZE_CODE}")
+    if(GB_ROM_SIZE LESS GB_ROM_DECLARED)
+        message(FATAL_ERROR "GB_ROM is ${GB_ROM_SIZE} bytes but its header declares ${GB_ROM_DECLARED}: pad it with 0xFF bytes to that size")
+    endif()
+endif()
+esptool_py_flash_to_partition(flash "rom" ${GB_ROM_PATH})
