@@ -326,6 +326,10 @@ private:
 	int startLeft = 0;
 };
 
+// Whether Walnut-CGB will skip drawing the next frame, asked before running it: with frame_skip on it
+// draws every other frame, as frame_skip_count (flipped at each vertical blank) says.
+inline bool frameSkipped(const gb_s& gb){ return gb.direct.frame_skip && !gb.display.frame_skip_count; }
+
 // Suspend and resume: at shutdown (auto-sleep, low battery) the whole emulator goes to the state
 // partition: gb_s (Walnut-CGB keeps all of its state there), the sound tracker and the cartridge RAM.
 // The next boot resumes it once. Layout: [header sector][gb_s][ToneApu][cartridge RAM]; the header

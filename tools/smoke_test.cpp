@@ -384,10 +384,12 @@ int main(int argc, char** argv){
 		for(int frame = 0; frame < 600; frame++){
 			g.direct.joypad = ~(rand() & (JOYPAD_A | JOYPAD_B | JOYPAD_LEFT | JOYPAD_RIGHT));
 			g.direct.frame_skip = skip && frame % 50 < 20; // on and off, as being behind comes and goes
+			const bool skipped = frameSkipped(g); // as the firmware counts them
 			linesThisFrame = 0;
 			gb_run_frame_dualfetch(&g);
 			CHECK(linesThisFrame == 0 || linesThisFrame == LCD_HEIGHT); // skipped whole, for the ring of groups
-			skippedFrames += linesThisFrame == 0;
+			if(skipped) CHECK(linesThisFrame == 0);
+			skippedFrames += skipped;
 			apu.tick(16743);
 			uint64_t h = 1469598103934665603u ^ apu.output().hz ^ uint64_t(apu.output().level) << 32;
 			auto mix = [&](const void* data, size_t n){
@@ -422,11 +424,12 @@ int main(int argc, char** argv){
 	CHECK(restore(resumed));
 	skippedFrames = 0;
 	const auto skipped = playOn(resumed, true, false);
-	const int notDrawn = skippedFrames; // skipped, or the game had the LCD off
+	CHECK(skippedFrames > 100); // every other frame while frame_skip is on: 12 stretches of 20
+	const int skippedCount = skippedFrames;
 	CHECK(restore(resumed));
 	skippedFrames = 0;
 	CHECK(playOn(resumed, false, false) == skipped);
-	CHECK(notDrawn - skippedFrames > 100);
-	printf("skipping %d of 600 frames leaves the game unchanged\n", notDrawn - skippedFrames);
+	CHECK(skippedFrames == 0);
+	printf("skipping %d of 600 frames leaves the game unchanged\n", skippedCount);
 	printf("smoke test passed\n");
 }

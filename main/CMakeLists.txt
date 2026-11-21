@@ -32,12 +32,9 @@ add_custom_command(TARGET ${COMPONENT_LIB} POST_BUILD
         $<TARGET_FILE:${COMPONENT_LIB}> ${WALNUT_IRAM}
     VERBATIM)
 
-# Experiment: the emulator built for size (-Os) instead of speed (-O2), measured on the device with
-# idf.py -DGB_OPT_SIZE=ON build (a cache variable: -DGB_OPT_SIZE=OFF to go back).
-option(GB_OPT_SIZE "Build main.cpp (the emulator) with -Os" OFF)
-if(GB_OPT_SIZE)
-    set_source_files_properties(main.cpp PROPERTIES COMPILE_OPTIONS -Os)
-endif()
+# The emulator (main.cpp holds Walnut-CGB) built for size: its CPU loop is near the 32 KB instruction
+# cache, and fewer cache misses beat -O2's faster code (measured: CLAUDE.md, Performance).
+set_source_files_properties(main.cpp PROPERTIES COMPILE_OPTIONS -Os)
 
 # The game written to the rom partition by `idf.py flash` (and in the merged image):
 # idf.py -DGB_ROM=path/to/game.gbc build (a relative path is taken from the project directory)

@@ -15,8 +15,8 @@ Firmware (ESP-IDF 5.x; tested with v5.4.1 in `~/esp/esp-idf`):
 . ~/esp/esp-idf/export.sh
 idf.py build                           # GB_ROM defaults to roms/tobudx.gb
 idf.py -DGB_ROM=path/game.gbc build    # another bundled game (≤ 4 MB; relative to the project dir)
-idf.py -p /dev/ttyACM0 flash monitor   # prints "CPU load: N% (scaler on core 1: M%), F frames shown" every second
-idf.py merge-bin -o cgb-bit-merged.bin # -> build/cgb-bit-merged.bin, the release image
+idf.py -p /dev/ttyACM0 flash monitor   # prints "CPU load: N% (scaler on core 1: M%), F frames shown, S skipped" every second
+idf.py merge-bin -o cgb-bit-merged.bin # -> build/cgb-bit-merged.bin, the release image (idf.py build doesn't update it)
 ```
 
 `GB_ROM` is a CMake cache variable: an existing `build/` keeps the old path (delete `build/` if it
@@ -107,25 +107,30 @@ the smoke test checks that the split matches it.
 ## Performance
 
 `CPU load` is core 0's busy time per second as a share of the frame budget (over 100% = the game
-runs slow); the second number is `scaleTask` on core 1. Measured on a Bit 3 with Tobu Tobu Girl
-Deluxe, steady play (heaviest stretch in brackets):
+runs slow); the second number is `scaleTask` on core 1; then the frames shown of 60 and how many
+`frameSkipped` counted (the rest of those not shown: the game had the LCD off, e.g. in fades).
+Measured on a Bit 3 with Tobu Tobu Girl Deluxe, steady play (heaviest stretch in brackets):
 
 | Build | Core 0 | Core 1 |
 |---|---|---|
 | v0.1.0 (scaler: 12 multiplies per pixel) | ~133% (150%) | idle |
 | v0.1.1 (packed channels, horizontal pass once per line) | ~94% (106%) | idle |
 | a3855a8 (vertical pass on core 1) | ~83% (98%) | ~10% |
-| current (whole scaler on core 1, only colour lookup on core 0) | ~77% (90%) | ~22% |
+| v0.2.1 (whole scaler on core 1, only colour lookup on core 0) | ~77% (90-94%) | ~22% |
+| 88e5f53 (small hot functions in internal RAM) | ~74% (87%) | ~21% |
+| current (and main.cpp built with `-Os`) | ~71% (83%) | ~21% |
 
+Title and menus: 53-57% on v0.2.1, 48-55% with internal RAM, 43-50% with `-Os` too. These runs
+are deterministic to the percent from boot, so differences of a few points are real.
 Nearly all that is left on core 0 is the emulator. Already tuned in `sdkconfig.defaults`: 240 MHz,
-`-O2`, QIO flash at 80 MHz, 32 KB instruction / 64 KB data cache. Measure a change on the PC
+`-O2` (main.cpp: `-Os`, below), QIO flash at 80 MHz, 32 KB instruction / 64 KB data cache. Measure a change on the PC
 first (time the stage in a small harness around `frontend.h`), then on the device. The esp32sim
 emulator doesn't model cache timing, so it can't judge any of these.
 
 Hot code in internal RAM: the whole core (~43 KB; `__gb_step_cpu` alone is 30 KB,
 `gb_run_frame_dualfetch` is inlined into `app_main`) gave ~73% (87%), 4-5 points, for ~45 KB of
-heap (131 KB → 86 KB left for cartridge RAM), so it wasn't kept. Kept instead (not yet measured on
-the device): only the small hot functions, ~10 KB (131.7 KB → 121.8 KB free): main.cpp's callbacks
+heap (131 KB → 86 KB left for cartridge RAM), so it wasn't kept. Kept instead: only the small hot
+functions, which gave 77% → 74% (90-94% → 87%) for ~10 KB at `-O2`: main.cpp's callbacks
 and `scaleTask` with `IRAM_ATTR`, and Walnut-CGB's memory access, CB opcodes and line drawing
 (`WALNUT_IRAM` in `main/CMakeLists.txt`). Walnut-CGB has no attribute hook, and an ESP-IDF linker
 fragment can't target `libmain.a` (ldgen fails to parse the `LINK_ONCE_DISCARD` flag of the C++
@@ -134,14 +139,17 @@ those functions' `.text.F`/`.literal.F` sections to `.iram1.F`/`.iram1.F.literal
 `IRAM_ATTR` produces; it fails the build if a listed function is gone (renamed or inlined
 upstream). Check with `xtensa-esp32s3-elf-nm -C build/cgb-bit.elf`: they must be at 0x4037xxxx.
 
-`-DGB_OPT_SIZE=ON` builds main.cpp with `-Os` (an experiment to measure: main.cpp's code 65.3 KB →
-57.1 KB, `__gb_step_cpu` 30.5 KB → 27.3 KB, still near the 32 KB instruction cache). A cache
-variable like `GB_ROM`: it sticks in `build/` until `-DGB_OPT_SIZE=OFF`.
+main.cpp (with Walnut-CGB) is built with `-Os` (`main/CMakeLists.txt`): its code 65.3 KB → 57.1 KB,
+`__gb_step_cpu` 30.5 KB → 27.3 KB (0x7a2b → 0x6a8a in `nm -S`), and 74% → 71% (87% → 83%): the
+CPU loop is near the 32 KB instruction cache, so fewer cache misses beat `-O2`'s faster code (as
+CrankBoy's authors found on the Playdate). The functions in internal RAM shrink too: 123.5 KB of
+internal RAM is left (131.7 KB with neither).
 
 When the main loop is behind schedule it sets `gb.direct.frame_skip`: Walnut-CGB then draws only
 every other frame (whole frames, so the 5-line groups stay intact) until caught up. Drawing never
 changes the game; the smoke test checks that (sound, cartridge RAM, work RAM and I/O registers
-match frame by frame with and without skipping).
+match frame by frame with and without skipping) and that every frame `frameSkipped` predicts
+draws no line. On the device it hasn't been needed so far: steady play shows 60 frames, 0 skipped.
 
 ## Flash layout (`partitions.csv`) and its coupling
 

@@ -127,11 +127,11 @@ idf.py -p /dev/ttyACM0 flash monitor
 ```
 
 `idf.py flash` writes the emulator and the game (`roms/tobudx.gb`, or `-DGB_ROM=...`) and keeps
-the save partition. `idf.py monitor` prints `CPU load: N% (scaler on core 1: M%), F frames shown`
-every second: the first core's time (emulation, sending frames) as a share of the Game Boy's frame
-time, which must stay under 100% for full speed, then the second core's (scaling), then how many of
-the 60 frames were shown (fewer: skipped to keep up, or the game turned its screen off).
-`idf.py -DGB_OPT_SIZE=ON build` builds the emulator for size (`-Os`) instead, to compare.
+the save partition. `idf.py monitor` prints
+`CPU load: N% (scaler on core 1: M%), F frames shown, S skipped` every second: the first core's
+time (emulation, sending frames) as a share of the Game Boy's frame time, which must stay under
+100% for full speed, then the second core's (scaling), then how many of the 60 frames were shown
+and how many were skipped to keep up (the others not shown: the game turned its screen off).
 
 - `walnut-cgb/`: git submodule, [Mr-PauI/Walnut-CGB](https://github.com/Mr-PauI/Walnut-CGB),
   left untouched. The build copies `walnut_cgb.h` into `build/` and applies `patches/*.diff`:

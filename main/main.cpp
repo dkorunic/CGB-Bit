@@ -555,7 +555,7 @@ extern "C" void app_main(){
 	running = true;
 	MenuButton menu;
 	bool lit = false, dimmed = false;
-	uint32_t tickTime = millis(), activityTime = tickTime, busyUs = 0, frameCount = 0, shown = 0;
+	uint32_t tickTime = millis(), activityTime = tickTime, busyUs = 0, frameCount = 0, shown = 0, skipped = 0;
 	int64_t next = esp_timer_get_time();
 	while(true){
 		const uint32_t now = millis();
@@ -606,6 +606,7 @@ extern "C" void app_main(){
 		}
 
 		const int64_t start = esp_timer_get_time();
+		skipped += frameSkipped(gb);
 		gb.direct.joypad = ~pressed;
 		gb_run_frame_dualfetch(&gb);
 		apu.tick(FrameUs);
@@ -628,13 +629,13 @@ extern "C" void app_main(){
 		}
 
 		// Shown by `idf.py monitor`, in % of the frame time budget: core 0 (emulation, each line's
-		// colours, sending frames) and core 1 (scaleTask: the scaler); then the frames shown of 60
-		// (fewer: skipped to keep up, or the game had the LCD off).
+		// colours, sending frames) and core 1 (scaleTask: the scaler); then the frames shown of 60 and
+		// how many were skipped to keep up (the rest of those not shown: the game had the LCD off).
 		busyUs += esp_timer_get_time() - start;
 		if(++frameCount % 60 == 0){
-			printf("CPU load: %d%% (scaler on core 1: %d%%), %d frames shown\n", (int) (busyUs * 100 / (60 * FrameUs)),
-				(int) (scaleBusyUs.exchange(0) * 100 / (60 * FrameUs)), (int) shown);
-			busyUs = shown = 0;
+			printf("CPU load: %d%% (scaler on core 1: %d%%), %d frames shown, %d skipped\n", (int) (busyUs * 100 / (60 * FrameUs)),
+				(int) (scaleBusyUs.exchange(0) * 100 / (60 * FrameUs)), (int) shown, (int) skipped);
+			busyUs = shown = skipped = 0;
 		}
 
 		// Real Game Boy speed. Always yield at least a tick, so the idle task feeds the task watchdog;
