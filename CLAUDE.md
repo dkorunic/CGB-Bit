@@ -119,16 +119,20 @@ Deluxe, steady play (heaviest stretch in brackets):
 
 Nearly all that is left on core 0 is the emulator. Already tuned in `sdkconfig.defaults`: 240 MHz,
 `-O2`, QIO flash at 80 MHz, 32 KB instruction / 64 KB data cache. Measure a change on the PC
-first (time the stage in a small harness around `frontend.h`), then on the device.
+first (time the stage in a small harness around `frontend.h`), then on the device. The esp32sim
+emulator doesn't model cache timing, so it can't judge any of these.
 
-Tried and not kept: running the emulator's hot code from internal RAM. ~43 KB (`__gb_step_cpu`
-alone is 30 KB; `gb_run_frame_dualfetch` is inlined into `app_main`) gave ~73% (87%), i.e. 4-5
-points, for ~45 KB of internal RAM (heap left for cartridge RAM: 131 KB → 86 KB). Walnut-CGB has
-no attribute hook, and an ESP-IDF linker fragment can't target `libmain.a` (ldgen fails to parse
-the `LINK_ONCE_DISCARD` flag of the C++ COMDAT groups), so it was done in a `PRE_LINK` step: objcopy
-renamed the functions' `.text.F`/`.literal.F` sections in `main.cpp.obj` to `.iram1.F` and
-`.iram1.F.literal`, exactly the names `IRAM_ATTR` produces. Worth revisiting if a game needs the
-headroom.
+Hot code in internal RAM: the whole core (~43 KB; `__gb_step_cpu` alone is 30 KB,
+`gb_run_frame_dualfetch` is inlined into `app_main`) gave ~73% (87%), 4-5 points, for ~45 KB of
+heap (131 KB → 86 KB left for cartridge RAM), so it wasn't kept. Kept instead (not yet measured on
+the device): only the small hot functions, ~10 KB (131.7 KB → 121.8 KB free): main.cpp's callbacks
+and `scaleTask` with `IRAM_ATTR`, and Walnut-CGB's memory access, CB opcodes and line drawing
+(`WALNUT_IRAM` in `main/CMakeLists.txt`). Walnut-CGB has no attribute hook, and an ESP-IDF linker
+fragment can't target `libmain.a` (ldgen fails to parse the `LINK_ONCE_DISCARD` flag of the C++
+COMDAT groups), so a `POST_BUILD` step on the component library (`tools/iram_hot.sh`) renames
+those functions' `.text.F`/`.literal.F` sections to `.iram1.F`/`.iram1.F.literal`, the names
+`IRAM_ATTR` produces; it fails the build if a listed function is gone (renamed or inlined
+upstream). Check with `xtensa-esp32s3-elf-nm -C build/cgb-bit.elf`: they must be at 0x4037xxxx.
 
 ## Flash layout (`partitions.csv`) and its coupling
 

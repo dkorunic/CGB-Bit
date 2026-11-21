@@ -10,6 +10,7 @@
 #include <driver/gpio.h>
 #include <driver/ledc.h>
 #include <esp_timer.h>
+#include <esp_attr.h>
 #include <esp_efuse.h>
 #include <esp_sleep.h>
 #include <esp_adc/adc_oneshot.h>
@@ -100,7 +101,7 @@ static int ringSlot = -1, nextSlot; // ringSlot: the group being filtered (-1: n
 static bool frameSent; // this frame's last group went to scaleTask
 static std::atomic<uint32_t> scaleBusyUs;
 
-static void scaleTask(void*){
+IRAM_ATTR static void scaleTask(void*){
 	static Scaler::Rows rows;
 	ScaleJob j;
 	while(true){
@@ -448,11 +449,12 @@ static void drawLowBattery(uint32_t now){
 static uint8_t audio_read(uint16_t addr){ return apu.read(addr); }
 static void audio_write(uint16_t addr, uint8_t val){ apu.write(addr, val); }
 
-static uint8_t romRead(gb_s*, const uint_fast32_t addr){ return rom.read8(addr); }
-static uint16_t romRead16(gb_s*, const uint_fast32_t addr){ return rom.read16(addr); }
-static uint32_t romRead32(gb_s*, const uint_fast32_t addr){ return rom.read32(addr); }
-static uint8_t ramRead(gb_s*, const uint_fast32_t addr){ return addr < cartRamSize ? cartRam[addr] : 0xFF; }
-static void ramWrite(gb_s*, const uint_fast32_t addr, const uint8_t v){
+// The emulator's hot callbacks run from internal RAM (with Walnut-CGB's helpers, see main/CMakeLists.txt).
+IRAM_ATTR static uint8_t romRead(gb_s*, const uint_fast32_t addr){ return rom.read8(addr); }
+IRAM_ATTR static uint16_t romRead16(gb_s*, const uint_fast32_t addr){ return rom.read16(addr); }
+IRAM_ATTR static uint32_t romRead32(gb_s*, const uint_fast32_t addr){ return rom.read32(addr); }
+IRAM_ATTR static uint8_t ramRead(gb_s*, const uint_fast32_t addr){ return addr < cartRamSize ? cartRam[addr] : 0xFF; }
+IRAM_ATTR static void ramWrite(gb_s*, const uint_fast32_t addr, const uint8_t v){
 	if(addr >= cartRamSize || cartRam[addr] == v) return;
 	cartRam[addr] = v;
 	ramWriteMs = millis();
@@ -462,7 +464,7 @@ static void ramWrite(gb_s*, const uint_fast32_t addr, const uint8_t v){
 static void onError(gb_s*, const gb_error_e e, const uint16_t addr){
 	printf("Game Boy error %d at %04x\n", (int) e, addr);
 }
-static void drawLine(gb_s* g, const uint8_t* pixels, const uint_fast8_t y){
+IRAM_ATTR static void drawLine(gb_s* g, const uint8_t* pixels, const uint_fast8_t y){
 	if(ringSlot < 0){ // first line of a group (or of the first frame, which starts at line 1)
 		xSemaphoreTake(ringFree, portMAX_DELAY);
 		ringSlot = nextSlot;

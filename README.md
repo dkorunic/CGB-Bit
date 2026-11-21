@@ -28,7 +28,8 @@ through the menus, then an autopilot plays the first level for 20 seconds.
   its palette for that title for Nintendo-published games (Tetris, Super Mario Land, Pokémon...),
   its default (white, green, navy) for all others.
 - **Speed**: real Game Boy speed, 59.73 frames per second, on Walnut-CGB's dual-fetch CPU core.
-  The emulator has one of the ESP32-S3's two cores; the scaling runs on the other.
+  The emulator has one of the ESP32-S3's two cores; the scaling runs on the other. Its hot
+  helpers run from internal RAM.
 - **Sound**: the two square-wave channels, tracked from the game's register writes (frequency,
   trigger, length, volume envelope, master volume), with the loudest one played on the buzzer.
   Melodies and many effects come through; the wave and noise channels (bass, drums) and the sweep
