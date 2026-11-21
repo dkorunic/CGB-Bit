@@ -138,8 +138,10 @@ headroom.
   `frontend.h`: magic `GBS2`, sequence number, the ROM's 0x134..0x14F header, size) then the
   cartridge RAM. Stores go to the slot not holding the current save, header written last, so a
   power cut keeps the previous save; `newestSave` picks the newer valid slot for this ROM. Only
-  battery cartridge types (`hasBattery`) are saved. No install path writes this partition unless
-  the user ticks "Erase device".
+  battery cartridge types (`hasBattery`) are saved. The header also carries the MBC3 clock
+  (`saveRtc`/`loadRtc`; Walnut-CGB starts it at day 0 on every cold boot), in fields appended after
+  `size` with a marker byte, so headers from older builds (erased 0xFF there) still load. No
+  install path writes this partition unless the user ticks "Erase device".
 - `state` (data 0x42), 192 KB: `StateHeader` sector, then the state; `StatePartSize` in main.cpp
   must match (a static_assert checks the largest state fits). `shutdown()` stores it after
   `saveFlush()` (only once the game runs); the next boot erases the header before loading, so it

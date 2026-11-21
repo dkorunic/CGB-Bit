@@ -245,11 +245,12 @@ static void saveFlush(){
 	if(!ramDirty || !savePart) return;
 	buzzerDuty(0); // erasing pauses the game: don't drone the last note meanwhile
 	const int slot = storeSlot(saveHeaders, saveSlot);
-	SaveHeader h;
+	SaveHeader h = {};
 	memcpy(h.magic, SaveMagic, sizeof(h.magic));
 	h.seq = nextSeq(saveHeaders);
 	memcpy(h.romHeader, rom.data + 0x134, sizeof(h.romHeader));
 	h.size = cartRamSize;
+	saveRtc(h, gb);
 	const size_t base = slot * SaveSlot;
 	const bool ok = esp_partition_erase_range(savePart, base, (SaveData + cartRamSize + 4095) & ~4095u) == ESP_OK
 		&& esp_partition_write(savePart, base + SaveData, cartRam, cartRamSize) == ESP_OK
@@ -326,6 +327,7 @@ static void saveLoad(){
 	const int slot = newestSave(saveHeaders, rom.data + 0x134, cartRamSize);
 	if(slot >= 0 && esp_partition_read(savePart, slot * SaveSlot + SaveData, cartRam, cartRamSize) == ESP_OK){
 		saveSlot = slot;
+		loadRtc(saveHeaders[slot], gb);
 		printf("Save loaded (%u bytes, slot %d)\n", (unsigned) cartRamSize, slot);
 	}
 }

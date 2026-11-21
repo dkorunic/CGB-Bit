@@ -198,6 +198,22 @@ static void testSaves(){
 	memset(s[1].magic, 0xFF, 4); // a free (erased) slot is used before any written one
 	CHECK(storeSlot(s, -1) == 1);
 
+	// The MBC3 clock round-trips through a save header with its flags; a header from before the
+	// clock was saved (erased 0xFF after size) leaves the clock alone.
+	static gb_s g;
+	const uint8_t clock[5] = { 59, 30, 23, 0xFF, 0xC1 }; // 23:30:59 of day 511, halted, day carry
+	memcpy(g.rtc_real.bytes, clock, 5);
+	SaveHeader withClock = {};
+	saveRtc(withClock, g);
+	memset(g.rtc_real.bytes, 0, 5);
+	loadRtc(withClock, g);
+	CHECK(!memcmp(g.rtc_real.bytes, clock, 5));
+	SaveHeader old;
+	memset(&old, 0xFF, sizeof(old));
+	memset(g.rtc_real.bytes, 0, 5);
+	loadRtc(old, g);
+	CHECK(g.rtc_real.bytes[0] == 0 && g.rtc_real.bytes[4] == 0);
+
 	// Resuming a state (main.cpp's stateResume): stored at shutdown right after save 7.
 	StateHeader st = {};
 	st.hadSave = 1;

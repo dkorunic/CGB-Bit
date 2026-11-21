@@ -65,8 +65,23 @@ struct SaveHeader {
 	uint32_t seq;
 	uint8_t romHeader[0x150 - 0x134];
 	uint32_t size;
+	// Appended later, so older saves still load: their header ends at size and leaves erased 0xFF.
+	uint8_t rtcSaved; // RtcSaved: rtc holds the MBC3 clock
+	uint8_t rtc[5];
 };
 constexpr char SaveMagic[4] = { 'G', 'B', 'S', '2' };
+constexpr uint8_t RtcSaved = 1;
+
+// The MBC3 clock goes with the battery save. Walnut-CGB runs it only while the game runs and a cold
+// boot starts it at day 0, so without this it went back there at every power-on; now it stands still
+// while the Bit is off. The raw registers are kept (gb_set_rtc would drop the halt and carry flags).
+inline void saveRtc(SaveHeader& h, const gb_s& gb){
+	h.rtcSaved = RtcSaved;
+	memcpy(h.rtc, gb.rtc_real.bytes, sizeof(h.rtc));
+}
+inline void loadRtc(const SaveHeader& h, gb_s& gb){
+	if(h.rtcSaved == RtcSaved) memcpy(gb.rtc_real.bytes, h.rtc, sizeof(h.rtc));
+}
 
 // Where the next store goes and its sequence number, given the slots' headers and the slot holding
 // this game's current save (-1: none yet). With a save, the other slot. Without one, the free slot

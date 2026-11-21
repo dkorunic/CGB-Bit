@@ -36,6 +36,7 @@ through the menus, then an autopilot plays the first level for 20 seconds.
 - **Saves**: battery-backed cartridge RAM (high scores, save games) is kept in flash, stored a
   second after the game stops writing it and before any sleep or shutdown, alternately into two
   slots so a power cut while storing keeps the previous save. Each save is tied to its game.
+  An MBC3 game's clock is kept with its save, so it carries on from there at the next power-on.
   Cartridges without a battery lose their RAM at power-off, as on a Game Boy.
 - **Resume**: auto-sleep and the low-battery shutdown store the whole running game; switching the
   Bit back on carries on from that moment, once. Switching off with the power switch cuts power at
@@ -172,7 +173,9 @@ gh api -X POST repos/dkorunic/CGB-Bit/environments/github-pages/deployment-branc
 
 - Choosing another palette for an original Game Boy game (a Game Boy Color's button combinations
   at boot).
-- Link cable, and the real-time clock of MBC3 games across power-off.
+- Link cable. MBC3 clocks stand still while the Bit is off (it has no clock of its own that
+  survives the power switch), and a clock cartridge without RAM (type 0x0F) has no save to keep
+  its clock in, so it starts at day 0 at every power-on.
 - Games with 128 KB of cartridge RAM may not find room for it in RAM; they stop with a message.
 
 ## License
