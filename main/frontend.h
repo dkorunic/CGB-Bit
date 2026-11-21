@@ -104,45 +104,55 @@ inline int newestSave(const SaveHeader slot[2], const uint8_t* romHeader, uint32
 // and 1+m; the four weights of a pixel add up to 25, so a flat colour stays exactly the same.
 struct Scaler {
 	static constexpr int W = 128, H = 115;
-	uint16_t out[H][W] = {};
+	using Rows = uint32_t[5][W]; // a group of 5 source lines, each filtered horizontally
 
-	// Called for lines 0..143 of every frame. palette[pixel & mask] is the RGB565 colour of a pixel:
-	// the 12 colours of dmgColors with mask 0x33 for original Game Boy games, Walnut-CGB's 64-entry
-	// fixPalette with mask 0x3F for Game Boy Color ones. Each line is filtered horizontally once, on
-	// arrival; every 5th line then gives 4 output rows.
-	void line(const uint8_t* pixels, unsigned y, const uint16_t* palette, uint8_t mask){
-		uint32_t* h = rows[y % 5];
-		for(int k = 0; k < LCD_WIDTH / 5; k++, pixels += 5, h += 4){
+	// Stage 1, per source line: palette[pixel & mask] is the RGB565 colour of a pixel (the 12 colours
+	// of dmgColors with mask 0x33 for original Game Boy games, Walnut-CGB's 64-entry fixPalette with
+	// mask 0x3F for Game Boy Color ones); the line is filtered horizontally into row (weights add up
+	// to 5), its place in the group being y % 5.
+	static void filter(const uint8_t* pixels, const uint16_t* palette, uint8_t mask, uint32_t* row){
+		for(int k = 0; k < LCD_WIDTH / 5; k++, pixels += 5, row += 4){
 			uint32_t p[5];
 			for(int i = 0; i < 5; i++) p[i] = spread(palette[pixels[i] & mask]);
-			h[0] = 4 * p[0] + p[1];
-			h[1] = 3 * p[1] + 2 * p[2];
-			h[2] = 2 * p[2] + 3 * p[3];
-			h[3] = p[3] + 4 * p[4];
+			row[0] = 4 * p[0] + p[1];
+			row[1] = 3 * p[1] + 2 * p[2];
+			row[2] = 2 * p[2] + 3 * p[3];
+			row[3] = p[3] + 4 * p[4];
 		}
-		if(y % 5 == 4) emit(y / 5, 4);
-		else if(y == LCD_HEIGHT - 1) emit(y / 5, 3); // lines 140..143: the 4th row would need line 144
+	}
+
+	// Output rows a group yields once source line y is in: 4 at its 5th line, 3 at line 143 (lines
+	// 140..143: the 4th row would need line 144), otherwise 0. They are output rows y / 5 * 4 on.
+	static int rowsDone(unsigned y){ return y % 5 == 4 ? 4 : y == LCD_HEIGHT - 1 ? 3 : 0; }
+
+	// Stage 2: a group's rows into n consecutive output rows of W pixels at out. Swap: byte-swapped,
+	// the order the ST7735S takes them in.
+	template<bool Swap = false> static void emit(const Rows& rows, int n, uint16_t* out){
+		for(int r = 0; r < n; r++, out += W){
+			const uint32_t* a = rows[r];
+			const uint32_t* b = rows[r + 1];
+			const uint32_t wa = 4 - r, wb = 1 + r;
+			for(int j = 0; j < W; j++){
+				const uint32_t s = wa * a[j] + wb * b[j];
+				const uint16_t v = ((s >> 11 & 0x3FF) + 12) / 25 << 11 | ((s >> 21) + 12) / 25 << 5 | ((s & 0x3FF) + 12) / 25;
+				out[j] = Swap ? __builtin_bswap16(v) : v;
+			}
+		}
+	}
+
+	// Both stages in one go, into out (the PC tools; the firmware runs stage 2 on its other core).
+	uint16_t out[H][W] = {};
+	void line(const uint8_t* pixels, unsigned y, const uint16_t* palette, uint8_t mask){
+		filter(pixels, palette, mask, rows[y % 5]);
+		if(const int n = rowsDone(y)) emit(rows, n, out[y / 5 * 4]);
 	}
 
 private:
-	uint32_t rows[5][W] = {}; // the last group's lines, filtered horizontally (weights add up to 5)
+	Rows rows = {};
 
 	// RGB565 with each channel in its own field, wide enough for sums of weight 25 (25 * 63 < 2^11):
 	// blue in bits 0-9, red 11-20, green 21-31. One multiply then weights all three channels.
 	static uint32_t spread(uint16_t c){ return (c | uint32_t(c) << 16) & 0x07E0F81F; }
-
-	void emit(unsigned group, int n){
-		for(int r = 0; r < n; r++){
-			const uint32_t* a = rows[r];
-			const uint32_t* b = rows[r + 1];
-			const uint32_t wa = 4 - r, wb = 1 + r;
-			uint16_t* o = out[group * 4 + r];
-			for(int j = 0; j < W; j++){
-				const uint32_t s = wa * a[j] + wb * b[j];
-				o[j] = ((s >> 11 & 0x3FF) + 12) / 25 << 11 | ((s >> 21) + 12) / 25 << 5 | ((s & 0x3FF) + 12) / 25;
-			}
-		}
-	}
 };
 
 // Colours for an original Game Boy game, as a Game Boy Color's boot ROM picks them: by title checksum

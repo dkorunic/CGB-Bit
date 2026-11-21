@@ -70,6 +70,21 @@ static void testScaler(){
 	for(int y = 0; y < LCD_HEIGHT; y++) scaler.line(line, y, cgb, 0x3F);
 	CHECK(scaler.out[50][50] == cgb[7]);
 
+	// The firmware's split (filter per line, emit per group on its other core, in panel byte order)
+	// gives the same picture as line().
+	srand(3);
+	for(auto& c : cgb) c = rand();
+	static uint16_t split[Scaler::H][Scaler::W];
+	static Scaler::Rows rows;
+	for(int y = 0; y < LCD_HEIGHT; y++){
+		for(auto& p : line) p = rand();
+		scaler.line(line, y, cgb, 0x3F);
+		Scaler::filter(line, cgb, 0x3F, rows[y % 5]);
+		if(const int n = Scaler::rowsDone(y)) Scaler::emit<true>(rows, n, split[y / 5 * 4]);
+	}
+	for(int y = 0; y < Scaler::H; y++)
+		for(int x = 0; x < Scaler::W; x++) CHECK(split[y][x] == __builtin_bswap16(scaler.out[y][x]));
+
 }
 
 static void testApu(){

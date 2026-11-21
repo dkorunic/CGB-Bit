@@ -5,6 +5,8 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include <driver/gpio.h>
 #include <driver/ledc.h>
 #include <esp_timer.h>
@@ -20,6 +22,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <atomic>
 #include <LovyanGFX.hpp>
 
 #define ENABLE_SOUND 1
@@ -64,7 +67,6 @@ static bool battMonitor = true; // off when the chip has no ADC calibration to c
 
 static gb_s gb;
 static ToneApu apu;
-static Scaler scaler;
 static Rom rom;
 static uint16_t dmgPalette[0x40]; // original Game Boy games: the colours a Game Boy Color gives them
 
@@ -84,6 +86,31 @@ static constexpr size_t StatePartSize = 0x30000; // partitions.csv
 static_assert(stateSize(0x20000) <= StatePartSize, "the state partition must hold the largest cartridge RAM");
 static const esp_partition_t* statePart; // null: no resume
 static bool running; // a game is running: shutdown() suspends it
+
+// The scaler's two stages on the two cores. drawLine (core 0, with the emulator) filters each line
+// horizontally into a slot of the ring; each finished group of 5 lines goes to scaleTask (core 1),
+// which writes its output rows straight into the frame buffer, in panel byte order. Slots are
+// taken and freed in order: ringFree counts the free ones.
+static constexpr int RingGroups = 4;
+static Scaler::Rows ring[RingGroups];
+struct ScaleJob { uint16_t* out; uint8_t slot, rows; bool last; };
+static QueueHandle_t scaleJobs;
+static SemaphoreHandle_t ringFree, frameScaled; // frameScaled: the frame's last group is done
+static int ringSlot = -1, nextSlot; // ringSlot: the group being filtered (-1: none yet)
+static bool frameSent; // this frame's last group went to scaleTask
+static std::atomic<uint32_t> scaleBusyUs;
+
+static void scaleTask(void*){
+	ScaleJob j;
+	while(true){
+		xQueueReceive(scaleJobs, &j, portMAX_DELAY);
+		const int64_t start = esp_timer_get_time();
+		Scaler::emit<true>(ring[j.slot], j.rows, j.out);
+		scaleBusyUs += esp_timer_get_time() - start;
+		xSemaphoreGive(ringFree);
+		if(j.last) xSemaphoreGive(frameScaled);
+	}
+}
 
 static uint32_t millis(){
 	return esp_timer_get_time() / 1000;
@@ -426,8 +453,20 @@ static void onError(gb_s*, const gb_error_e e, const uint16_t addr){
 	printf("Game Boy error %d at %04x\n", (int) e, addr);
 }
 static void drawLine(gb_s* g, const uint8_t* pixels, const uint_fast8_t y){
-	if(g->cgb.cgbMode) scaler.line(pixels, y, g->cgb.fixPalette, 0x3F); // Game Boy Color: the game's colours
-	else scaler.line(pixels, y, dmgPalette, 0x33); // shade and layer (OBJ0, OBJ1, BG)
+	if(ringSlot < 0){ // first line of a group (or of the first frame, which starts at line 1)
+		xSemaphoreTake(ringFree, portMAX_DELAY);
+		ringSlot = nextSlot;
+		nextSlot = (nextSlot + 1) % RingGroups;
+	}
+	// Game Boy Color: the game's colours; original games: shade and layer (OBJ0, OBJ1, BG)
+	if(g->cgb.cgbMode) Scaler::filter(pixels, g->cgb.fixPalette, 0x3F, ring[ringSlot][y % 5]);
+	else Scaler::filter(pixels, dmgPalette, 0x33, ring[ringSlot][y % 5]);
+	if(const int rows = Scaler::rowsDone(y)){
+		const ScaleJob j = { frame + (Top + y / 5 * 4) * Screen, (uint8_t) ringSlot, (uint8_t) rows, y == LCD_HEIGHT - 1 };
+		xQueueSend(scaleJobs, &j, portMAX_DELAY);
+		ringSlot = -1;
+		frameSent |= j.last;
+	}
 }
 
 // No usable game in the rom partition: say how to add one, then sleep like any idle Bit.
@@ -495,6 +534,11 @@ extern "C" void app_main(){
 	printf("Playing %s (%s, ROM %u KB, save RAM %u bytes)\n", gb_get_rom_name(&gb, title),
 		gb.cgb.cgbMode ? "Game Boy Color" : "Game Boy", (unsigned) (rom.size / 1024), (unsigned) cartRamSize);
 
+	scaleJobs = xQueueCreate(RingGroups, sizeof(ScaleJob));
+	ringFree = xSemaphoreCreateCounting(RingGroups, RingGroups);
+	frameScaled = xSemaphoreCreateBinary();
+	if(!scaleJobs || !ringFree || !frameScaled || xTaskCreatePinnedToCore(scaleTask, "scale", 2048, nullptr, 5, nullptr, 1) != pdPASS)
+		noGame("(not enough RAM)");
 	lcd.startWrite(); // keep the bus so pushImageDMA returns while the transfer runs
 	running = true;
 	MenuButton menu;
@@ -555,23 +599,27 @@ extern "C" void app_main(){
 		apu.tick(FrameUs);
 		buzzerTone(apu.output());
 
-		for(int y = 0; y < Scaler::H; y++){
-			uint16_t* row = frame + (Top + y) * Screen;
-			for(int x = 0; x < Scaler::W; x++) row[x] = __builtin_bswap16(scaler.out[y][x]); // panel order
-		}
-		drawLowBattery(now);
-		// LovyanGFX waits for the previous transfer itself; the emulator then draws into the other buffer.
-		lcd.pushImageDMA(0, 0, Screen, Screen, (const lgfx::swap565_t*) frame);
-		frame = frame == frames[0] ? frames[1] : frames[0];
-		if(!lit){
-			lit = true;
-			backlightFade(blFull);
+		// A whole frame drawn (none while the game has the LCD off: the screen keeps the last one): once
+		// core 1 has its last rows in, send it. LovyanGFX waits for the previous transfer itself; the
+		// next frame goes into the other buffer.
+		if(frameSent){
+			frameSent = false;
+			xSemaphoreTake(frameScaled, portMAX_DELAY);
+			drawLowBattery(now);
+			lcd.pushImageDMA(0, 0, Screen, Screen, (const lgfx::swap565_t*) frame);
+			frame = frame == frames[0] ? frames[1] : frames[0];
+			if(!lit){
+				lit = true;
+				backlightFade(blFull);
+			}
 		}
 
-		// Shown by `idf.py monitor`: emulation + drawing time per second, in % of the frame time budget.
+		// Shown by `idf.py monitor`, in % of the frame time budget: core 0 (emulation, the scaler's
+		// first stage, sending frames) and core 1 (the scaler's second stage).
 		busyUs += esp_timer_get_time() - start;
 		if(++frameCount % 60 == 0){
-			printf("CPU load: %d%%\n", (int) (busyUs * 100 / (60 * FrameUs)));
+			printf("CPU load: %d%% (scaler on core 1: %d%%)\n", (int) (busyUs * 100 / (60 * FrameUs)),
+				(int) (scaleBusyUs.exchange(0) * 100 / (60 * FrameUs)));
 			busyUs = 0;
 		}
 

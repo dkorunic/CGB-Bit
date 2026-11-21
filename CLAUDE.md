@@ -73,7 +73,13 @@ Emulator integration (Walnut-CGB specifics):
   regenerate rather than edit). `Scaler::out` is native RGB565; the firmware byte-swaps for the panel.
 - `Scaler` is the hot spot after the emulator (it was half the frame time before it packed R, G, B
   into one 32-bit word and filtered each line horizontally once). Keep it bit-exact: `demo.gif`'s
-  md5 must not change for a pure speed change.
+  md5 must not change for a pure speed change. Its two stages run on the two cores in the
+  firmware: `drawLine` (core 0, emulator) runs `Scaler::filter` into a 4-slot ring and queues each
+  finished 5-line group; `scaleTask` (core 1) runs `Scaler::emit<true>` straight into the DMA frame
+  buffer in panel byte order. The main loop pushes a frame only once `frameScaled` says its last
+  group is in (no push while the game has the LCD off). All LCD/SPI calls stay on core 0. The PC
+  tools use `Scaler::line` (both stages, native order); the smoke test checks the split matches.
+  `CPU load` prints core 0's share and the scaler's share on core 1.
 - Save states: Walnut-CGB keeps all mutable state in `gb_s` (its statics are const tables), so a
   state is `gb_s` + `ToneApu` + cartridge RAM (`stateParts`). `loadState` keeps this boot's
   callback pointers; the header carries the firmware's ELF SHA-256, so any rebuild invalidates
