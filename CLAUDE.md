@@ -143,7 +143,10 @@ headroom.
 - `state` (data 0x42), 192 KB: `StateHeader` sector, then the state; `StatePartSize` in main.cpp
   must match (a static_assert checks the largest state fits). `shutdown()` stores it after
   `saveFlush()` (only once the game runs); the next boot erases the header before loading, so it
-  resumes once. A resumed cartridge RAM newer than the battery save is marked dirty and stored.
+  resumes once. `resumeAction` decides first: a state older than the game's newest battery save
+  (stored since, e.g. on another firmware build, which ignores the state) is erased unused, or its
+  older cartridge RAM would replace the newer save; a resumed RAM newer than the save is marked
+  dirty and stored. The smoke test covers the cases.
   The partition table is in the firmware part (0x8000), so updating with `cgb-bit.bin` alone
   (0x10000) keeps an older table: no `state` partition, resume off (logged), nothing breaks.
 - The `rom` offset and size are repeated in `web/manifest.json`. `web/build.sh` cuts the merged

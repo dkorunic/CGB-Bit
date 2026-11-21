@@ -40,7 +40,7 @@ through the menus, then an autopilot plays the first level for 20 seconds.
 - **Resume**: auto-sleep and the low-battery shutdown store the whole running game; switching the
   Bit back on carries on from that moment, once. Switching off with the power switch cuts power at
   once, so the game starts afresh next time (with its battery save). A firmware update starts
-  games afresh too.
+  games afresh too, and a resume never goes back past a newer battery save.
 - From [Anarch-Bit](https://github.com/dkorunic/Anarch-Bit): auto-sleep after 2 minutes
   without input (the screen dims 10 s before), low-battery icon below 15% and shutdown at 1%,
   backlight fades, battery monitoring as in the stock firmware.

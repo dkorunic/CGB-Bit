@@ -197,6 +197,21 @@ static void testSaves(){
 	CHECK(newestSave(s, a, 8192) == -1 && newestSave(s, b, 8192) == 0);
 	memset(s[1].magic, 0xFF, 4); // a free (erased) slot is used before any written one
 	CHECK(storeSlot(s, -1) == 1);
+
+	// Resuming a state (main.cpp's stateResume): stored at shutdown right after save 7.
+	StateHeader st = {};
+	st.hadSave = 1;
+	st.saveSeq = 7;
+	st.ramSaved = 1;
+	CHECK(resumeAction(st, true, true, 7) == Resume::Clean); // the save holds the same RAM
+	CHECK(resumeAction(st, true, true, 8) == Resume::Stale); // saved again since (another build): never go back
+	CHECK(resumeAction(st, true, false, 0) == Resume::Dirty); // its save is gone: the state brings it back
+	CHECK(resumeAction(st, false, false, 0) == Resume::Clean); // no battery: nothing to store
+	st.ramSaved = 0; // the store before shutdown failed: the state's RAM is newer
+	CHECK(resumeAction(st, true, true, 7) == Resume::Dirty);
+	st = {}; // no save yet when the state was stored
+	CHECK(resumeAction(st, true, false, 0) == Resume::Dirty);
+	CHECK(resumeAction(st, true, true, 1) == Resume::Stale); // a save appeared since
 }
 
 // A tiny hand-assembled ROM of the given cartridge type, run for 3 frames through the same callbacks;

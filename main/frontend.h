@@ -320,8 +320,9 @@ struct StateHeader {
 	uint8_t build[32]; // the firmware's ELF SHA-256
 	uint8_t romHeader[0x150 - 0x134];
 	uint32_t ramSize;
-	uint32_t saveSeq; // with ramSaved: the battery save holding the same cartridge RAM
-	uint8_t ramSaved;
+	uint32_t saveSeq; // with hadSave: the sequence number of this game's newest battery save then
+	uint8_t hadSave;
+	uint8_t ramSaved; // that save holds the same cartridge RAM as the state
 };
 constexpr char StateMagic[4] = { 'G', 'B', 'S', 'T' };
 constexpr size_t StateData = 0x1000;
@@ -329,6 +330,18 @@ constexpr size_t StateData = 0x1000;
 inline bool stateMatches(const StateHeader& h, const uint8_t build[32], const uint8_t* romHeader, uint32_t ramSize){
 	return !memcmp(h.magic, StateMagic, 4) && !memcmp(h.build, build, sizeof(h.build))
 		&& !memcmp(h.romHeader, romHeader, sizeof(h.romHeader)) && h.ramSize == ramSize;
+}
+
+// What to do with a matching state, given whether the game keeps battery saves and its newest save
+// now (save: whether there is one, seq: its sequence number). A save stored after the state (e.g.
+// played on another firmware build meanwhile, which ignores the state) makes the state stale: never
+// resume it, its older cartridge RAM would replace the newer save. Otherwise resume, and store the
+// resumed RAM unless the save already holds it (the save may also be gone: another game's stores).
+enum class Resume { Stale, Clean, Dirty };
+inline Resume resumeAction(const StateHeader& h, bool battery, bool save, uint32_t seq){
+	if(!battery) return Resume::Clean; // scratch RAM: nothing kept to disagree with
+	if(save && (!h.hadSave || seq != h.saveSeq)) return Resume::Stale;
+	return save && h.ramSaved ? Resume::Clean : Resume::Dirty;
 }
 
 constexpr size_t stateSize(size_t ramSize){ return StateData + sizeof(gb_s) + sizeof(ToneApu) + ramSize; }

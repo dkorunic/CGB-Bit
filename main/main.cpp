@@ -274,8 +274,9 @@ static void stateStore(){
 	memcpy(h.build, esp_app_get_description()->app_elf_sha256, sizeof(h.build));
 	memcpy(h.romHeader, rom.data + 0x134, sizeof(h.romHeader));
 	h.ramSize = cartRamSize;
-	h.ramSaved = savePart && saveSlot >= 0 && !ramDirty;
-	h.saveSeq = h.ramSaved ? saveHeaders[saveSlot].seq : 0;
+	h.hadSave = saveSlot >= 0;
+	h.saveSeq = h.hadSave ? saveHeaders[saveSlot].seq : 0;
+	h.ramSaved = h.hadSave && !ramDirty;
 	const bool ok = esp_partition_erase_range(statePart, 0, (stateSize(cartRamSize) + 4095) & ~4095u) == ESP_OK
 		&& stateParts(gb, apu, cartRam, cartRamSize, [](size_t at, void* p, size_t n){ return esp_partition_write(statePart, at, p, n) == ESP_OK; })
 		&& esp_partition_write(statePart, 0, &h, sizeof(h)) == ESP_OK; // last: a cut-short store never loads
@@ -283,7 +284,8 @@ static void stateStore(){
 }
 
 // Resume the state stored at the last shutdown, once: its header is erased before loading, so after
-// a power cut later (the power switch skips shutdown()) the game starts afresh, not back here.
+// a power cut later (the power switch skips shutdown()) the game starts afresh, not back here. A
+// state older than the game's battery save (resumeAction) is erased unused. Runs after saveLoad().
 static void stateResume(){
 	statePart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t) 0x42, "state");
 	if(!statePart || stateSize(cartRamSize) > statePart->size){
@@ -293,14 +295,18 @@ static void stateResume(){
 	}
 	StateHeader h;
 	if(esp_partition_read(statePart, 0, &h, sizeof(h)) != ESP_OK
-		|| !stateMatches(h, esp_app_get_description()->app_elf_sha256, rom.data + 0x134, cartRamSize)
-		|| esp_partition_erase_range(statePart, 0, StateData) != ESP_OK) return;
+		|| !stateMatches(h, esp_app_get_description()->app_elf_sha256, rom.data + 0x134, cartRamSize)) return;
+	const Resume action = resumeAction(h, savePart, saveSlot >= 0, saveSlot >= 0 ? saveHeaders[saveSlot].seq : 0);
+	if(esp_partition_erase_range(statePart, 0, StateData) != ESP_OK) return;
+	if(action == Resume::Stale){
+		printf("State older than the save: not resumed\n");
+		return;
+	}
 	if(!loadState(gb, apu, cartRam, cartRamSize, [](size_t at, void* p, size_t n){ return esp_partition_read(statePart, at, p, n) == ESP_OK; })){
 		printf("State load failed, restarting\n"); // the emulator is half overwritten, the state erased
 		esp_restart();
 	}
-	// The resumed cartridge RAM replaces the battery save just loaded: store it unless they're the same.
-	if(savePart && !(h.ramSaved && saveSlot >= 0 && saveHeaders[saveSlot].seq == h.saveSeq)){
+	if(action == Resume::Dirty){ // the resumed cartridge RAM is newer than the battery save
 		ramDirty = true;
 		ramWriteMs = ramDirtyMs = millis();
 	}
@@ -616,8 +622,8 @@ extern "C" void app_main(){
 			}
 		}
 
-		// Shown by `idf.py monitor`, in % of the frame time budget: core 0 (emulation, the scaler's
-		// first stage, sending frames) and core 1 (the scaler's second stage).
+		// Shown by `idf.py monitor`, in % of the frame time budget: core 0 (emulation, each line's
+		// colours, sending frames) and core 1 (scaleTask: the scaler).
 		busyUs += esp_timer_get_time() - start;
 		if(++frameCount % 60 == 0){
 			printf("CPU load: %d%% (scaler on core 1: %d%%)\n", (int) (busyUs * 100 / (60 * FrameUs)),
