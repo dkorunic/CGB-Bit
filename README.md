@@ -24,8 +24,9 @@ What the Bit's 128x128 screen shows, at 2x size and 20 FPS: rendered on the PC b
   cartridges with no mapper, MBC1, MBC2, MBC3 (with its clock) or MBC5.
 - **Picture**: the 160x144 screen scaled to 128x115 with an exact 5:4 box filter per colour
   channel (each screen pixel blends two Game Boy pixels per axis), centred. Game Boy Color games
-  show their own colours; original Game Boy games use a soft green palette (`DefaultPalette` in
-  `main/frontend.h`).
+  show their own colours; original Game Boy games get the colours a Game Boy Color gives them:
+  its palette for that title for Nintendo-published games (Tetris, Super Mario Land, Pokémon...),
+  its default (white, green, navy) for all others.
 - **Speed**: real Game Boy speed, 59.73 frames per second, on Walnut-CGB's dual-fetch CPU core.
 - **Sound**: the two square-wave channels, tracked from the game's register writes (frequency,
   trigger, length, volume envelope, master volume), with the loudest one played on the buzzer.
@@ -35,6 +36,10 @@ What the Bit's 128x128 screen shows, at 2x size and 20 FPS: rendered on the PC b
   second after the game stops writing it and before any sleep or shutdown, alternately into two
   slots so a power cut while storing keeps the previous save. Each save is tied to its game.
   Cartridges without a battery lose their RAM at power-off, as on a Game Boy.
+- **Resume**: auto-sleep and the low-battery shutdown store the whole running game; switching the
+  Bit back on carries on from that moment, once. Switching off with the power switch cuts power at
+  once, so the game starts afresh next time (with its battery save). A firmware update starts
+  games afresh too.
 - From [Anarch-Bit](https://github.com/dkorunic/Anarch-Bit): auto-sleep after 2 minutes
   without input (the screen dims 10 s before), low-battery icon below 15% and shutdown at 1%,
   backlight fades, battery monitoring as in the stock firmware.
@@ -158,8 +163,8 @@ gh api -X POST repos/dkorunic/CGB-Bit/environments/github-pages/deployment-branc
 
 ## Not supported
 
-- Original Game Boy games aren't colourised the way a Game Boy Color does; they use the green
-  palette.
+- Choosing another palette for an original Game Boy game (a Game Boy Color's button combinations
+  at boot).
 - Link cable, and the real-time clock of MBC3 games across power-off.
 - Games with 128 KB of cartridge RAM may not find room for it in RAM; they stop with a message.
 
@@ -167,5 +172,6 @@ gh api -X POST repos/dkorunic/CGB-Bit/environments/github-pages/deployment-branc
 
 [CC0 1.0](LICENSE) (public domain) for everything in this repository except third-party parts,
 which keep their own licenses: Walnut-CGB (submodule, MIT, derived from Peanut-GB, MIT, with parts
-from SameBoy, MIT), Tobu Tobu Girl Deluxe (`roms/tobudx.gb`: code MIT, assets CC BY 4.0, see
+from SameBoy, MIT), the Game Boy Color palette tables in `main/cgb_palettes.h` (generated from
+SameBoy's `BootROMs/cgb_boot.asm`, Expat/MIT, Copyright (c) 2015-2026 Lior Halphon), Tobu Tobu Girl Deluxe (`roms/tobudx.gb`: code MIT, assets CC BY 4.0, see
 [roms/README.md](roms/README.md)), LovyanGFX (fetched at build time, FreeBSD license).

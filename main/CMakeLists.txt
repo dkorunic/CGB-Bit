@@ -1,5 +1,5 @@
 idf_component_register(SRCS "main.cpp"
-                       PRIV_REQUIRES esp_driver_ledc esp_driver_gpio esp_timer efuse esp_adc esp_partition)
+                       PRIV_REQUIRES esp_driver_ledc esp_driver_gpio esp_timer efuse esp_adc esp_partition esp_app_format)
 
 # Walnut-CGB from the submodule, patched with patches/*.diff into the build dir by
 # tools/patch_walnut.sh, so the submodule stays clean. The patch list is on the command line, so

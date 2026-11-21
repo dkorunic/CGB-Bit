@@ -32,11 +32,13 @@ static uint8_t ramRead(gb_s*, const uint_fast32_t addr){ CHECK(addr < cartRam.si
 static void ramWrite(gb_s*, const uint_fast32_t addr, const uint8_t v){ CHECK(addr < cartRam.size()); cartRam[addr] = v; ramWrites++; }
 static void onError(gb_s*, const gb_error_e e, const uint16_t addr){ fprintf(stderr, "gb error %d at %04x\n", e, addr); errors++; }
 static std::set<uint16_t> colorsSeen;
+static uint16_t dmgPalette[0x40];
 static void drawLine(gb_s* gb, const uint8_t* pixels, const uint_fast8_t y){ // as in main.cpp
 	CHECK(y < LCD_HEIGHT);
-	if(gb->cgb.cgbMode) scaler.line(pixels, y, gb->cgb.fixPalette, 0x3F);
-	else scaler.line(pixels, y, DefaultPalette, LCD_COLOUR);
-	for(int x = 0; x < LCD_WIDTH; x++) colorsSeen.insert(scaler.ring[y % 5][x]);
+	const uint16_t* palette = gb->cgb.cgbMode ? gb->cgb.fixPalette : dmgPalette;
+	const uint8_t mask = gb->cgb.cgbMode ? 0x3F : 0x33;
+	scaler.line(pixels, y, palette, mask);
+	for(int x = 0; x < LCD_WIDTH; x++) colorsSeen.insert(palette[pixels[x] & mask]);
 	linesThisFrame++;
 }
 
@@ -68,7 +70,6 @@ static void testScaler(){
 	for(int y = 0; y < LCD_HEIGHT; y++) scaler.line(line, y, cgb, 0x3F);
 	CHECK(scaler.out[50][50] == cgb[7]);
 
-	CHECK(rgb565(0xFFFFFF) == 0xFFFF && rgb565(0xFF0000) == 0xF800 && rgb565(0x00FF00) == 0x07E0 && rgb565(0x0000FF) == 0x001F);
 }
 
 static void testApu(){
@@ -216,6 +217,37 @@ static void testCartRam(){
 	romData.clear(); // main() loads the game into it next
 }
 
+// The palettes a Game Boy Color's boot ROM gives original Game Boy games (cgb_palettes.h).
+static void testDmgColors(){
+	std::vector<uint8_t> h(0x150, 0);
+	const Rom r{ h.data(), h.size() };
+	uint16_t pal[0x40];
+	auto title = [&](const char* t, uint8_t licensee){
+		memset(&h[0x134], 0, 16);
+		memcpy(&h[0x134], t, strlen(t));
+		h[0x14B] = licensee;
+		dmgColors(r, pal);
+	};
+	auto layer = [&](int l, std::initializer_list<uint16_t> bgr555){ // OBJ0, OBJ1, BG
+		int shade = 0;
+		for(uint16_t c : bgr555) if(pal[l << 4 | shade++] != bgr555_to_rgb565_accurate(c)) return false;
+		return true;
+	};
+	title("TETRIS", 0x00); // not published by Nintendo: the default
+	CHECK(layer(0, { 0x7FFF, 0x421F, 0x1CF2, 0x0000 }) && layer(1, { 0x7FFF, 0x421F, 0x1CF2, 0x0000 }) && layer(2, { 0x7FFF, 0x1BEF, 0x6180, 0x0000 }));
+	title("TETRIS", 0x01); // title checksum 0xDB: palette 24 for all three
+	CHECK(layer(0, { 0x7FFF, 0x03FF, 0x001F, 0x0000 }) && layer(1, { 0x7FFF, 0x03FF, 0x001F, 0x0000 }) && layer(2, { 0x7FFF, 0x03FF, 0x001F, 0x0000 }));
+	h[0x144] = '0'; // the new licensee code "01" is Nintendo too
+	h[0x145] = '1';
+	title("TETRIS", 0x33);
+	CHECK(layer(2, { 0x7FFF, 0x03FF, 0x001F, 0x0000 }));
+	title("SUPER MARIOLAND", 0x01); // checksum 0x46 is shared, the 4th letter picks this one
+	CHECK(layer(0, { 0x0000, 0x7FFF, 0x421F, 0x1CF2 }) && layer(2, { 0x7ED6, 0x4BFF, 0x2175, 0x0000 }));
+	title("SUPXR MARIOLAND\xED", 0x01); // the same checksum with a 4th letter of none of them: the default
+	CHECK(layer(2, { 0x7FFF, 0x1BEF, 0x6180, 0x0000 }));
+	CHECK(pal[0x30] == 0 && pal[0x3F] == 0);
+}
+
 static void testMenu(){
 	MenuButton m;
 	uint32_t t = 0;
@@ -235,6 +267,7 @@ int main(int argc, char** argv){
 	testRom();
 	testSaves();
 	testCartRam();
+	testDmgColors();
 	testMenu();
 	printf("front-end checks passed\n");
 
@@ -256,6 +289,7 @@ int main(int argc, char** argv){
 	static gb_s gb;
 	CHECK(gb_init(&gb, romRead, romRead16, romRead32, ramRead, ramWrite, onError, nullptr) == GB_INIT_NO_ERROR);
 	gb_init_lcd(&gb, drawLine);
+	dmgColors(rom, dmgPalette);
 	rom.clampToHeader();
 	size_t saveSize = 0;
 	CHECK(gb_get_save_size_s(&gb, &saveSize) == 0 && saveSize <= 0x20000);
@@ -286,5 +320,39 @@ int main(int argc, char** argv){
 	CHECK(drawnFrames > 3000);
 	CHECK(tonedFrames > 0);
 	if(gb.cgb.cgbMode) CHECK(colorsSeen.size() > 4); // real colours, not the 4 original shades
+
+	// Suspend and resume: a state taken now and loaded into a freshly started emulator plays on
+	// exactly as this one does (picture, sound and cartridge RAM, frame by frame).
+	std::vector<uint8_t> state(stateSize(cartRam.size()));
+	CHECK(stateParts(gb, apu, cartRam.data(), cartRam.size(), [&](size_t at, void* p, size_t n){ memcpy(&state[at], p, n); return true; }));
+	static Scaler screen;
+	screen = scaler; // the screen isn't in a state, the firmware just draws the next frame
+	auto playOn = [&](gb_s& g){
+		std::vector<uint64_t> hashes;
+		srand(2);
+		for(int frame = 0; frame < 600; frame++){
+			g.direct.joypad = ~(rand() & (JOYPAD_A | JOYPAD_B | JOYPAD_LEFT | JOYPAD_RIGHT));
+			gb_run_frame_dualfetch(&g);
+			apu.tick(16743);
+			uint64_t h = 1469598103934665603u ^ apu.output().hz ^ uint64_t(apu.output().level) << 32;
+			for(const auto* p = (const uint8_t*) scaler.out; p < (const uint8_t*) scaler.out + sizeof(scaler.out); p++) h = (h ^ *p) * 1099511628211u;
+			for(uint8_t b : cartRam) h = (h ^ b) * 1099511628211u;
+			hashes.push_back(h);
+		}
+		return hashes;
+	};
+	const auto expected = playOn(gb);
+	static gb_s resumed;
+	CHECK(gb_init(&resumed, romRead, romRead16, romRead32, ramRead, ramWrite, onError, nullptr) == GB_INIT_NO_ERROR);
+	gb_init_lcd(&resumed, drawLine);
+	int marker;
+	resumed.direct.priv = &marker; // this boot's: kept, not the state's (null)
+	apu = ToneApu();
+	std::fill(cartRam.begin(), cartRam.end(), 0xAA);
+	scaler = screen;
+	CHECK(loadState(resumed, apu, cartRam.data(), cartRam.size(), [&](size_t at, void* p, size_t n){ memcpy(p, &state[at], n); return true; }));
+	CHECK(resumed.direct.priv == &marker && resumed.display.lcd_draw_line == drawLine && resumed.gb_cart_ram_write == ramWrite);
+	CHECK(playOn(resumed) == expected);
+	printf("resumed state (%zu bytes) plays on identically\n", state.size());
 	printf("smoke test passed\n");
 }

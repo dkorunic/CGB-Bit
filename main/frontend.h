@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include "cgb_palettes.h"
 
 // The logo every Game Boy ROM header carries at 0x104, which a real Game Boy's boot ROM checks.
 constexpr uint8_t NintendoLogo[48] = {
@@ -104,47 +105,67 @@ inline int newestSave(const SaveHeader slot[2], const uint8_t* romHeader, uint32
 struct Scaler {
 	static constexpr int W = 128, H = 115;
 	uint16_t out[H][W] = {};
-	uint16_t ring[5][LCD_WIDTH] = {};
 
 	// Called for lines 0..143 of every frame. palette[pixel & mask] is the RGB565 colour of a pixel:
-	// 4 shades with mask 3 for original Game Boy games, Walnut-CGB's 64-entry fixPalette with mask
-	// 0x3F for Game Boy Color ones.
+	// the 12 colours of dmgColors with mask 0x33 for original Game Boy games, Walnut-CGB's 64-entry
+	// fixPalette with mask 0x3F for Game Boy Color ones. Each line is filtered horizontally once, on
+	// arrival; every 5th line then gives 4 output rows.
 	void line(const uint8_t* pixels, unsigned y, const uint16_t* palette, uint8_t mask){
-		for(int x = 0; x < LCD_WIDTH; x++) ring[y % 5][x] = palette[pixels[x] & mask];
+		uint32_t* h = rows[y % 5];
+		for(int k = 0; k < LCD_WIDTH / 5; k++, pixels += 5, h += 4){
+			uint32_t p[5];
+			for(int i = 0; i < 5; i++) p[i] = spread(palette[pixels[i] & mask]);
+			h[0] = 4 * p[0] + p[1];
+			h[1] = 3 * p[1] + 2 * p[2];
+			h[2] = 2 * p[2] + 3 * p[3];
+			h[3] = p[3] + 4 * p[4];
+		}
 		if(y % 5 == 4) emit(y / 5, 4);
 		else if(y == LCD_HEIGHT - 1) emit(y / 5, 3); // lines 140..143: the 4th row would need line 144
 	}
 
 private:
-	void emit(unsigned group, int rows){
-		for(int r = 0; r < rows; r++){
-			const uint16_t* a = ring[r];
-			const uint16_t* b = ring[r + 1];
-			const int wa = 4 - r, wb = 1 + r;
+	uint32_t rows[5][W] = {}; // the last group's lines, filtered horizontally (weights add up to 5)
+
+	// RGB565 with each channel in its own field, wide enough for sums of weight 25 (25 * 63 < 2^11):
+	// blue in bits 0-9, red 11-20, green 21-31. One multiply then weights all three channels.
+	static uint32_t spread(uint16_t c){ return (c | uint32_t(c) << 16) & 0x07E0F81F; }
+
+	void emit(unsigned group, int n){
+		for(int r = 0; r < n; r++){
+			const uint32_t* a = rows[r];
+			const uint32_t* b = rows[r + 1];
+			const uint32_t wa = 4 - r, wb = 1 + r;
+			uint16_t* o = out[group * 4 + r];
 			for(int j = 0; j < W; j++){
-				const int m = j % 4, s = 5 * (j / 4) + m, w0 = 4 - m, w1 = 1 + m;
-				const uint16_t px[4] = { a[s], a[s + 1], b[s], b[s + 1] };
-				const int w[4] = { wa * w0, wa * w1, wb * w0, wb * w1 };
-				int red = 0, green = 0, blue = 0;
-				for(int k = 0; k < 4; k++){
-					red += w[k] * (px[k] >> 11);
-					green += w[k] * (px[k] >> 5 & 63);
-					blue += w[k] * (px[k] & 31);
-				}
-				out[group * 4 + r][j] = (red + 12) / 25 << 11 | (green + 12) / 25 << 5 | (blue + 12) / 25;
+				const uint32_t s = wa * a[j] + wb * b[j];
+				o[j] = ((s >> 11 & 0x3FF) + 12) / 25 << 11 | ((s >> 21) + 12) / 25 << 5 | ((s & 0x3FF) + 12) / 25;
 			}
 		}
 	}
 };
 
-constexpr uint16_t rgb565(uint32_t rgb888){
-	return (rgb888 >> 19 & 0x1F) << 11 | (rgb888 >> 10 & 0x3F) << 5 | (rgb888 >> 3 & 0x1F);
+// Colours for an original Game Boy game, as a Game Boy Color's boot ROM picks them: by title checksum
+// for Nintendo-published games, its default (white, green, navy) for all others. Indexed like
+// drawLine's pixels & 0x33 (12-colour mode): the shade in bits 1-0, OBJ0/OBJ1/BG as 0x00/0x10/0x20.
+inline void dmgColors(const Rom& rom, uint16_t (&out)[0x40]){
+	using namespace cgbboot;
+	const uint8_t licensee = rom.read8(0x14B);
+	int combo = 0;
+	if(licensee == 0x01 || (licensee == 0x33 && rom.read8(0x144) == '0' && rom.read8(0x145) == '1')){
+		uint8_t sum = 0;
+		for(int i = 0x134; i <= 0x143; i++) sum += rom.read8(i);
+		for(int i = 0; i < (int) sizeof(TitleChecksums); i++)
+			if(TitleChecksums[i] == sum && (i < FirstDup || rom.read8(0x137) == (uint8_t) Dups4thLetter[i - FirstDup])){
+				combo = PalettePerChecksum[i];
+				break;
+			}
+	}
+	memset(out, 0, sizeof(out));
+	for(int layer = 0; layer < 3; layer++)
+		for(int shade = 0; shade < 4; shade++)
+			out[layer << 4 | shade] = bgr555_to_rgb565_accurate(Colors[Combos[combo][layer] + shade]); // as Walnut-CGB converts Color games'
 }
-
-// The 4 shades of original Game Boy games on the Bit's screen, lightest first: a soft green in the
-// spirit of the original screen, with enough contrast for the small panel. (Game Boy Color games
-// bring their own colours.)
-constexpr uint16_t DefaultPalette[4] = { rgb565(0xE0F8D0), rgb565(0x88C070), rgb565(0x346856), rgb565(0x081820) };
 
 // The Game Boy's two square-wave channels, tracked from the game's register writes, reduced to the
 // one tone a buzzer can play: the loudest audible channel. Sweep (NR10), duty, the wave and noise
@@ -271,3 +292,51 @@ private:
 	uint32_t downAt = 0;
 	int startLeft = 0;
 };
+
+// Suspend and resume: at shutdown (auto-sleep, low battery) the whole emulator goes to the state
+// partition: gb_s (Walnut-CGB keeps all of its state there), the sound tracker and the cartridge RAM.
+// The next boot resumes it once. Layout: [header sector][gb_s][ToneApu][cartridge RAM]; the header
+// is written last and names the firmware build (gb_s's layout and the callbacks are that build's).
+struct StateHeader {
+	char magic[4];
+	uint8_t build[32]; // the firmware's ELF SHA-256
+	uint8_t romHeader[0x150 - 0x134];
+	uint32_t ramSize;
+	uint32_t saveSeq; // with ramSaved: the battery save holding the same cartridge RAM
+	uint8_t ramSaved;
+};
+constexpr char StateMagic[4] = { 'G', 'B', 'S', 'T' };
+constexpr size_t StateData = 0x1000;
+
+inline bool stateMatches(const StateHeader& h, const uint8_t build[32], const uint8_t* romHeader, uint32_t ramSize){
+	return !memcmp(h.magic, StateMagic, 4) && !memcmp(h.build, build, sizeof(h.build))
+		&& !memcmp(h.romHeader, romHeader, sizeof(h.romHeader)) && h.ramSize == ramSize;
+}
+
+constexpr size_t stateSize(size_t ramSize){ return StateData + sizeof(gb_s) + sizeof(ToneApu) + ramSize; }
+
+// Calls io(offset, data, size) for each part after the header sector, to store or load them; stops
+// at the first that fails.
+template<class Io> bool stateParts(gb_s& gb, ToneApu& apu, uint8_t* ram, size_t ramSize, Io io){
+	const size_t apuAt = StateData + sizeof(gb_s), ramAt = apuAt + sizeof(ToneApu);
+	return io(StateData, (void*) &gb, sizeof(gb_s)) && io(apuAt, (void*) &apu, sizeof(ToneApu))
+		&& (!ramSize || io(ramAt, (void*) ram, ramSize));
+}
+
+// Loads a state over gb, apu and ram with read(offset, data, size), keeping this boot's callbacks.
+template<class Read> bool loadState(gb_s& gb, ToneApu& apu, uint8_t* ram, size_t ramSize, Read read){
+	const auto romRead = gb.gb_rom_read; const auto romRead16 = gb.gb_rom_read_16bit;
+	const auto romRead32 = gb.gb_rom_read_32bit; const auto ramRead = gb.gb_cart_ram_read;
+	const auto ramWrite = gb.gb_cart_ram_write; const auto error = gb.gb_error;
+	const auto serialTx = gb.gb_serial_tx; const auto serialRx = gb.gb_serial_rx;
+	const auto bootRead = gb.gb_bootrom_read; const auto drawLine = gb.display.lcd_draw_line;
+	void* const priv = gb.direct.priv;
+	const bool ok = stateParts(gb, apu, ram, ramSize, read);
+	gb.gb_rom_read = romRead; gb.gb_rom_read_16bit = romRead16;
+	gb.gb_rom_read_32bit = romRead32; gb.gb_cart_ram_read = ramRead;
+	gb.gb_cart_ram_write = ramWrite; gb.gb_error = error;
+	gb.gb_serial_tx = serialTx; gb.gb_serial_rx = serialRx;
+	gb.gb_bootrom_read = bootRead; gb.display.lcd_draw_line = drawLine;
+	gb.direct.priv = priv;
+	return ok;
+}

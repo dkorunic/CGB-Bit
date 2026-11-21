@@ -37,9 +37,10 @@ static uint32_t romRead32(gb_s*, const uint_fast32_t addr){ return romReader.rea
 static uint8_t ramRead(gb_s*, const uint_fast32_t addr){ return addr < cartRam.size() ? cartRam[addr] : 0xFF; }
 static void ramWrite(gb_s*, const uint_fast32_t addr, const uint8_t v){ if(addr < cartRam.size()) cartRam[addr] = v; }
 static void onError(gb_s*, const gb_error_e e, const uint16_t addr){ fprintf(stderr, "gb error %d at %04x\n", e, addr); }
+static uint16_t dmgPalette[0x40];
 static void drawLine(gb_s* gb, const uint8_t* pixels, const uint_fast8_t y){ // as in main.cpp
 	if(gb->cgb.cgbMode) scaler.line(pixels, y, gb->cgb.fixPalette, 0x3F);
-	else scaler.line(pixels, y, DefaultPalette, LCD_COLOUR);
+	else scaler.line(pixels, y, dmgPalette, 0x33);
 }
 
 int main(int argc, char** argv){
@@ -67,6 +68,7 @@ int main(int argc, char** argv){
 	size_t saveSize = 0;
 	if(gb_get_save_size_s(&gb, &saveSize) == 0) cartRam.assign(saveSize, 0);
 	gb_init_lcd(&gb, drawLine);
+	dmgColors(romReader, dmgPalette);
 
 	constexpr int Top = (128 - Scaler::H) / 2;
 	uint16_t screen[128][128] = {}; // black bands above and below the picture, as on the Bit

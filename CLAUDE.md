@@ -31,13 +31,15 @@ tools/make_demo.sh                   # regenerates demo.gif (needs Pillow)
 web/build.sh <out dir> build/cgb-bit-merged.bin <version>   # assemble the installer site
 ```
 
-The smoke test's unit checks (`testScaler`, `testApu`, `testRom`, `testSaves`, `testCartRam`, `testMenu` in
-`tools/smoke_test.cpp`) all run on every invocation; there is no per-check selection.
+The smoke test's unit checks (`testScaler`, `testApu`, `testRom`, `testSaves`, `testCartRam`, `testDmgColors`, `testMenu` in
+`tools/smoke_test.cpp`) all run on every invocation; there is no per-check selection. After the
+emulated minute it also round-trips a save state into a fresh `gb_s` and checks 600 more frames
+match exactly.
 
 ## Architecture
 
 - `main/frontend.h`: all emulator-facing logic with no ESP-IDF dependency (the box-filter `Scaler`,
-  the `ToneApu` sound tracker, the `MenuButton` Start/Select logic, `DefaultPalette`). It is shared
+  the `ToneApu` sound tracker, the `MenuButton` Start/Select logic, `dmgColors`, the save-state helpers). It is shared
   by the firmware and both PC tools, so a change here is exercised by the smoke test and shows up in
   the demo GIF. Include `walnut_cgb.h` before it.
 - `main/main.cpp`: everything hardware: Bit pins (two revisions, chosen by the efuse revision),
@@ -65,8 +67,17 @@ Emulator integration (Walnut-CGB specifics):
   aligned addresses and fall back to bytes otherwise (the smoke test checks both paths).
 - Frames run with `gb_run_frame_dualfetch()` (the plain `gb_run_frame` uses the slower core).
 - `drawLine` gets palette indices: in Game Boy Color mode (`gb->cgb.cgbMode`) they index
-  `gb->cgb.fixPalette` (64 RGB565 entries, mask 0x3F); otherwise the shade is `pixel & LCD_COLOUR`
-  into `DefaultPalette`. `Scaler::out` is native RGB565; the firmware byte-swaps for the panel.
+  `gb->cgb.fixPalette` (64 RGB565 entries, mask 0x3F); otherwise `pixel & 0x33` (shade, plus the
+  OBJ0/OBJ1/BG layer of the 12-colour mode) indexes `dmgColors`' table: the Game Boy Color boot
+  ROM's palette for the title (`main/cgb_palettes.h`, generated from SameBoy's `cgb_boot.asm`;
+  regenerate rather than edit). `Scaler::out` is native RGB565; the firmware byte-swaps for the panel.
+- `Scaler` is the hot spot after the emulator (it was half the frame time before it packed R, G, B
+  into one 32-bit word and filtered each line horizontally once). Keep it bit-exact: `demo.gif`'s
+  md5 must not change for a pure speed change.
+- Save states: Walnut-CGB keeps all mutable state in `gb_s` (its statics are const tables), so a
+  state is `gb_s` + `ToneApu` + cartridge RAM (`stateParts`). `loadState` keeps this boot's
+  callback pointers; the header carries the firmware's ELF SHA-256, so any rebuild invalidates
+  states (gb_s layout, function addresses).
 - Sound: `ENABLE_SOUND` routes register reads/writes 0xFF10..0xFF3F to `audio_read`/`audio_write`
   (backed by `ToneApu`). Walnut-CGB's 16/32-bit reads call `audio_read` for `addr + 1..3`, which
   can go past 0xFF3F, so `ToneApu` bounds-checks.
@@ -87,6 +98,10 @@ Flash layout (`partitions.csv`) and its coupling:
   power cut keeps the previous save; `newestSave` picks the newer valid slot for this ROM. Only
   battery cartridge types (`hasBattery`) are saved. No install path writes this partition unless
   the user ticks "Erase device".
+- `state` (data 0x42), 192 KB: `StateHeader` sector, then the state; `StatePartSize` in main.cpp
+  must match (a static_assert checks the largest state fits). `shutdown()` stores it after
+  `saveFlush()` (only once the game runs); the next boot erases the header before loading, so it
+  resumes once. A resumed cartridge RAM newer than the battery save is marked dirty and stored.
 - The `rom` offset and size are repeated in `web/manifest.json`. `web/build.sh` cuts the merged
   image at that offset into `cgb-bit-firmware.bin` and fails if the bundled ROM isn't found there,
   so moving partitions means updating `web/manifest.json`.

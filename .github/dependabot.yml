@@ -1,7 +1,14 @@
-# Keeps the SHA-pinned actions in .github/workflows up to date (PRs update the SHA and version comment).
+# Keeps the SHA-pinned actions in .github/workflows (PRs update the SHA and version comment) and the
+# walnut-cgb submodule up to date.
 version: 2
 updates:
   - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # Walnut-CGB: a PR when upstream moves. If it merged a fix carried in patches/, that patch no longer
+  # applies (patch -F0) and the PR's CI fails: delete the patch in the PR.
+  - package-ecosystem: gitsubmodule
     directory: /
     schedule:
       interval: weekly

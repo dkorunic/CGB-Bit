@@ -13,6 +13,8 @@
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_cali_scheme.h>
 #include <esp_partition.h>
+#include <esp_app_desc.h>
+#include <esp_system.h>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -64,6 +66,7 @@ static gb_s gb;
 static ToneApu apu;
 static Scaler scaler;
 static Rom rom;
+static uint16_t dmgPalette[0x40]; // original Game Boy games: the colours a Game Boy Color gives them
 
 // Cartridge RAM, and for battery-backed cartridges its two save slots in the saves partition (see
 // SaveHeader in frontend.h): each slot is a header sector then up to 128 KB of data.
@@ -75,6 +78,12 @@ static uint8_t* cartRam;
 static size_t cartRamSize;
 static bool ramDirty;
 static uint32_t ramWriteMs, ramDirtyMs, flushMs; // last write, first unsaved write, last store
+
+// The whole emulator at shutdown, resumed at the next boot (StateHeader in frontend.h).
+static constexpr size_t StatePartSize = 0x30000; // partitions.csv
+static_assert(stateSize(0x20000) <= StatePartSize, "the state partition must hold the largest cartridge RAM");
+static const esp_partition_t* statePart; // null: no resume
+static bool running; // a game is running: shutdown() suspends it
 
 static uint32_t millis(){
 	return esp_timer_get_time() / 1000;
@@ -226,6 +235,49 @@ static void saveFlush(){
 	printf("Save %s (slot %d)\n", ok ? "stored" : "store failed, will retry", slot);
 }
 
+// Suspend: called by shutdown() after saveFlush(), so ramSaved tells whether the battery save holds
+// the same cartridge RAM as the state.
+static void stateStore(){
+	if(!statePart) return;
+	buzzerDuty(0); // storing takes a moment
+	StateHeader h = {};
+	memcpy(h.magic, StateMagic, sizeof(h.magic));
+	memcpy(h.build, esp_app_get_description()->app_elf_sha256, sizeof(h.build));
+	memcpy(h.romHeader, rom.data + 0x134, sizeof(h.romHeader));
+	h.ramSize = cartRamSize;
+	h.ramSaved = savePart && saveSlot >= 0 && !ramDirty;
+	h.saveSeq = h.ramSaved ? saveHeaders[saveSlot].seq : 0;
+	const bool ok = esp_partition_erase_range(statePart, 0, (stateSize(cartRamSize) + 4095) & ~4095u) == ESP_OK
+		&& stateParts(gb, apu, cartRam, cartRamSize, [](size_t at, void* p, size_t n){ return esp_partition_write(statePart, at, p, n) == ESP_OK; })
+		&& esp_partition_write(statePart, 0, &h, sizeof(h)) == ESP_OK; // last: a cut-short store never loads
+	printf("State %s\n", ok ? "stored" : "store failed");
+}
+
+// Resume the state stored at the last shutdown, once: its header is erased before loading, so after
+// a power cut later (the power switch skips shutdown()) the game starts afresh, not back here.
+static void stateResume(){
+	statePart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t) 0x42, "state");
+	if(!statePart || stateSize(cartRamSize) > statePart->size){
+		statePart = nullptr;
+		printf("No state partition: games won't resume after sleep\n");
+		return;
+	}
+	StateHeader h;
+	if(esp_partition_read(statePart, 0, &h, sizeof(h)) != ESP_OK
+		|| !stateMatches(h, esp_app_get_description()->app_elf_sha256, rom.data + 0x134, cartRamSize)
+		|| esp_partition_erase_range(statePart, 0, StateData) != ESP_OK) return;
+	if(!loadState(gb, apu, cartRam, cartRamSize, [](size_t at, void* p, size_t n){ return esp_partition_read(statePart, at, p, n) == ESP_OK; })){
+		printf("State load failed, restarting\n"); // the emulator is half overwritten, the state erased
+		esp_restart();
+	}
+	// The resumed cartridge RAM replaces the battery save just loaded: store it unless they're the same.
+	if(savePart && !(h.ramSaved && saveSlot >= 0 && saveHeaders[saveSlot].seq == h.saveSeq)){
+		ramDirty = true;
+		ramWriteMs = ramDirtyMs = millis();
+	}
+	printf("Resumed\n");
+}
+
 static void saveLoad(){
 	savePart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t) 0x41, "saves");
 	if(!savePart || 2 * SaveSlot > savePart->size){
@@ -246,6 +298,7 @@ static void saveLoad(){
 // Same as Bit-Firmware shutdown(): park the pins so nothing leaks current, then sleep until power cycle.
 [[noreturn]] static void shutdown(){
 	saveFlush();
+	if(running) stateStore();
 	backlightFade(0);
 	const struct { int pin, level; gpio_pull_mode_t pull; } park[] = {
 		{ pins.bl, 1, GPIO_PULLUP_ONLY }, { pins.buzz, 0, GPIO_PULLDOWN_ONLY }, { pins.vref, 0, GPIO_PULLDOWN_ONLY } };
@@ -374,7 +427,7 @@ static void onError(gb_s*, const gb_error_e e, const uint16_t addr){
 }
 static void drawLine(gb_s* g, const uint8_t* pixels, const uint_fast8_t y){
 	if(g->cgb.cgbMode) scaler.line(pixels, y, g->cgb.fixPalette, 0x3F); // Game Boy Color: the game's colours
-	else scaler.line(pixels, y, DefaultPalette, LCD_COLOUR);
+	else scaler.line(pixels, y, dmgPalette, 0x33); // shade and layer (OBJ0, OBJ1, BG)
 }
 
 // No usable game in the rom partition: say how to add one, then sleep like any idle Bit.
@@ -436,11 +489,14 @@ extern "C" void app_main(){
 		if(hasBattery(rom.read8(0x147))) saveLoad(); // otherwise scratch RAM, lost at power-off as on a Game Boy
 	}
 	gb_init_lcd(&gb, drawLine);
+	dmgColors(rom, dmgPalette);
+	stateResume();
 	char title[17];
 	printf("Playing %s (%s, ROM %u KB, save RAM %u bytes)\n", gb_get_rom_name(&gb, title),
 		gb.cgb.cgbMode ? "Game Boy Color" : "Game Boy", (unsigned) (rom.size / 1024), (unsigned) cartRamSize);
 
 	lcd.startWrite(); // keep the bus so pushImageDMA returns while the transfer runs
+	running = true;
 	MenuButton menu;
 	bool lit = false, dimmed = false;
 	uint32_t tickTime = millis(), activityTime = tickTime, busyUs = 0, frameCount = 0;
