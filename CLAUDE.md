@@ -26,7 +26,7 @@ PC tools (no ESP-IDF needed; run them from a plain shell, the ESP-IDF shell's Py
 
 ```shell
 tools/smoke_test.sh [game.gbc]       # front-end unit checks + 1 emulated minute under ASan/UBSan
-node --test web/gb.test.mjs          # installer ROM checks + manifests
+node --test web/gb.test.mjs          # installer ROM checks, IPS/BPS patches, manifests
 node --test --test-name-pattern "accepts" web/gb.test.mjs   # a single web test
 tools/make_demo.sh                   # regenerates demo.gif (needs Pillow and gifsicle)
 web/build.sh <out dir> build/cgb-bit-merged.bin <version>   # assemble the installer site
@@ -176,7 +176,9 @@ against a pinned SHA-512 and served from the site (no CDN). `"new_install_prompt
 the whole chip on every install (wiping saves, and leaving no firmware after "Replace the game
 only"). For a player's own game the page builds a manifest as a `blob:` URL pointing at the picked
 file ("Replace the game only" = the game at the `rom` offset; "Install CGB-Bit with this game" =
-firmware part + game). `window.gbBit.useFile` is exposed for tests.
+firmware part + game). An optional `.ips`/`.bps` patch is applied first (`applyPatch` in `gb.js`;
+BPS checks the source and result CRC-32s). `window.gbBit.useFile(file, patchFile)` is exposed for
+tests.
 
 CI (`.github/workflows/build.yml`): tests job (smoke test + node test), firmware job in a
 digest-pinned `espressif/idf:v5.4.1` container, and on `v*` tags a release job (the only job with

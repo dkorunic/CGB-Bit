@@ -63,7 +63,10 @@
     <p>Pick a Game Boy or Game Boy Color game (<code>.gb</code>, <code>.gbc</code>, up to 4 MB) on your computer: homebrew (the
       <a href="https://hh.gbdev.io/">Homebrew Hub</a> lists many free ones) or a dump of a cartridge you own.
       It's checked here first and goes straight from this page to the Bit; it isn't uploaded anywhere.</p>
-    <input type="file" id="rom" accept=".gb,.gbc">
+    <input type="file" id="rom" accept=".gb,.gbc" aria-label="Game file">
+    <p style="margin:12px 0 4px">Optionally, a patch for it (a translation, bug fix or hack: <code>.ips</code> or
+      <code>.bps</code>), applied here before flashing:</p>
+    <input type="file" id="patch" accept=".ips,.bps" aria-label="Patch file (optional)">
     <p id="romInfo" role="status" aria-live="polite"></p>
     <div class="buttons" id="romButtons" hidden>
       <esp-web-install-button id="gameOnly">
@@ -95,7 +98,7 @@
   </div>
 </main>
 <script type="module">
-  import { checkRom, manifestFor } from "./gb.js";
+  import { applyPatch, checkRom, manifestFor } from "./gb.js";
 
   const version = document.getElementById("version");
   const info = document.getElementById("romInfo");
@@ -108,9 +111,10 @@
     version.textContent = "unknown";
   }
 
-  // A player's .gb file: checked like the firmware will, then flashed from a blob: URL into the
-  // rom partition, alone or after the firmware. Header values are shown as text, never as HTML.
-  async function useFile(file) {
+  // A player's .gb file, patched first if they picked a patch: checked like the firmware will, then
+  // flashed from a blob: URL into the rom partition, alone or after the firmware. Header values are
+  // shown as text, never as HTML.
+  async function useFile(file, patchFile) {
     const mine = ++pick; // a later pick wins, even if this one's file finishes reading last
     urls.forEach((u) => URL.revokeObjectURL(u));
     urls = [];
@@ -118,8 +122,10 @@
     info.className = "";
     try {
       if (!template) throw new Error("The installer couldn't load its manifest: reload the page.");
-      const bytes = new Uint8Array(await file.arrayBuffer());
+      let bytes = new Uint8Array(await file.arrayBuffer());
+      const patch = patchFile && new Uint8Array(await patchFile.arrayBuffer());
       if (mine !== pick) return;
+      if (patch) bytes = applyPatch(bytes, patch);
       const { title, size } = checkRom(bytes, template.rom_size);
       const padded = new Uint8Array(size).fill(0xFF);
       padded.set(bytes);
@@ -131,7 +137,7 @@
         urls.push(url);
         document.getElementById(id).setAttribute("manifest", url);
       }
-      info.textContent = `${title}, ${Math.ceil(size / 1024)} KB: ready to flash.`;
+      info.textContent = `${title}${patch ? ` (patched with ${patchFile.name})` : ""}, ${Math.ceil(size / 1024)} KB: ready to flash.`;
       buttons.hidden = false;
     } catch (e) {
       if (mine !== pick) return;
@@ -140,9 +146,10 @@
     }
   }
 
-  document.getElementById("rom").addEventListener("change", (e) => {
-    if (e.target.files.length) useFile(e.target.files[0]);
-  });
+  const romInput = document.getElementById("rom"), patchInput = document.getElementById("patch");
+  const update = () => { if (romInput.files.length) useFile(romInput.files[0], patchInput.files[0]); };
+  romInput.addEventListener("change", update);
+  patchInput.addEventListener("change", update);
   window.gbBit = { useFile }; // for tests
 </script>
 </body>

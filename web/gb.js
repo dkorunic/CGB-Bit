@@ -39,6 +39,126 @@ export function checkRom(rom, maxSize) {
 	return { title: title.trim() || "Untitled", size };
 }
 
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+	for (let k = 0; k < 8; k++) n = n & 1 ? 0xEDB88320 ^ (n >>> 1) : n >>> 1;
+	return n >>> 0;
+});
+/** CRC-32 (zlib's), which BPS patches carry for the game, the result and themselves. */
+export function crc32(bytes) {
+	let c = 0xFFFFFFFF;
+	for (const b of bytes) c = CRC_TABLE[(c ^ b) & 0xFF] ^ (c >>> 8);
+	return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+/**
+ * A ROM patch (translation, bug fix, hack) applied to the game in the browser, before checkRom.
+ * IPS: records of bytes at offsets, possibly past the end (the game grows). BPS: rebuilds the
+ * patched game from the original and checks both against their CRC-32s, so a patch for another
+ * version of the game is refused rather than producing a broken one.
+ * @param {Uint8Array} rom the original game
+ * @param {Uint8Array} patch the .ips or .bps file
+ * @returns {Uint8Array} the patched game; or throws an Error explaining the problem to the player
+ */
+export function applyPatch(rom, patch) {
+	const magic = String.fromCharCode(...patch.subarray(0, 5));
+	if (magic === "PATCH") return applyIps(rom, patch);
+	if (magic.startsWith("BPS1")) return applyBps(rom, patch);
+	throw new Error("This patch isn't an IPS or BPS file.");
+}
+
+function applyIps(rom, patch) {
+	const damaged = () => new Error("The patch file is damaged (it ends too early).");
+	let out = rom.slice();
+	const write = (at, bytes) => {
+		if (at + bytes.length > out.length) {
+			const grown = new Uint8Array(at + bytes.length);
+			grown.set(out);
+			out = grown;
+		}
+		out.set(bytes, at);
+	};
+	let p = 5;
+	const take = (n) => {
+		if (p + n > patch.length) throw damaged();
+		let v = 0;
+		for (let i = 0; i < n; i++) v = v * 256 + patch[p++];
+		return v;
+	};
+	for (;;) {
+		if (p + 3 <= patch.length && patch[p] === 0x45 && patch[p + 1] === 0x4F && patch[p + 2] === 0x46) { // "EOF"
+			p += 3;
+			if (p + 3 <= patch.length) out = out.slice(0, take(3)); // a truncation offset follows some
+			return out;
+		}
+		const at = take(3), size = take(2);
+		if (size) {
+			if (p + size > patch.length) throw damaged();
+			write(at, patch.subarray(p, p + size));
+			p += size;
+		} else {
+			const run = take(2), value = take(1);
+			write(at, new Uint8Array(run).fill(value));
+		}
+	}
+}
+
+function applyBps(rom, patch) {
+	const damaged = new Error("The patch file is damaged.");
+	if (patch.length < 4 + 12) throw damaged;
+	const u32 = (at) => (patch[at] | patch[at + 1] << 8 | patch[at + 2] << 16 | patch[at + 3] << 24) >>> 0;
+	const end = patch.length - 12;
+	if (crc32(patch.subarray(0, end + 8)) !== u32(end + 8)) throw damaged;
+	if (crc32(rom) !== u32(end)) throw new Error("This patch is for another version of the game (or another game): pick the file it was made for.");
+	let p = 4;
+	const number = () => { // BPS varint, without 32-bit overflow
+		let value = 0, shift = 1;
+		for (;;) {
+			if (p >= end) throw damaged;
+			const x = patch[p++];
+			value += (x & 0x7F) * shift;
+			if (x & 0x80) return value;
+			shift *= 128;
+			value += shift;
+		}
+	};
+	const sourceSize = number(), targetSize = number();
+	const metadata = number(); // not `p += number()`: that adds to p as it was before number() moved it
+	p += metadata;
+	if (sourceSize !== rom.length || targetSize > 64 << 20) throw damaged;
+	const out = new Uint8Array(targetSize);
+	let o = 0, sourceAt = 0, targetAt = 0;
+	const offset = () => { const v = number(); return (v & 1 ? -1 : 1) * Math.floor(v / 2); };
+	while (p < end) {
+		const action = number(), length = Math.floor(action / 4) + 1;
+		if (o + length > targetSize) throw damaged;
+		switch (action & 3) {
+			case 0: // SourceRead: the original's bytes at the same place
+				if (o + length > rom.length) throw damaged;
+				out.set(rom.subarray(o, o + length), o);
+				break;
+			case 1: // TargetRead: new bytes from the patch
+				if (p + length > end) throw damaged;
+				out.set(patch.subarray(p, p + length), o);
+				p += length;
+				break;
+			case 2: // SourceCopy: the original's bytes from elsewhere
+				sourceAt += offset();
+				if (sourceAt < 0 || sourceAt + length > rom.length) throw damaged;
+				out.set(rom.subarray(sourceAt, sourceAt + length), o);
+				sourceAt += length;
+				break;
+			case 3: // TargetCopy: earlier output, byte by byte (the ranges may overlap)
+				targetAt += offset();
+				if (targetAt < 0 || targetAt >= o) throw damaged;
+				for (let i = 0; i < length; i++) out[o + i] = out[targetAt++];
+				break;
+		}
+		o += length;
+	}
+	if (o !== targetSize || crc32(out) !== u32(end + 4)) throw damaged;
+	return out;
+}
+
 /**
  * ESP Web Tools manifest flashing `gameUrl` into the rom partition, alone or with the firmware.
  * @param {object} template the site's manifest.json: firmware at offset 0, the bundled game at the rom offset

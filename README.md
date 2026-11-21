@@ -89,7 +89,8 @@ Game Boy and Game Boy Color games (`.gb`, `.gbc`, up to 4 MB) go into the `rom` 
 `0x110000`, over the bundled one.
 
 In the [browser installer](https://dkorunic.github.io/CGB-Bit/), "Your own game": pick the file
-and the page checks it the way the firmware will (Game Boy header and checksum, a supported
+(and, if you like, an `.ips` or `.bps` patch for it: a translation, bug fix or hack, applied in the
+page; a BPS patch made for another version of the game is refused) and the page checks it the way the firmware will (Game Boy header and checksum, a supported
 cartridge type, size) and shows its title, then flashes it with "Replace the game only" (CGB-Bit
 already on the Bit) or "Install CGB-Bit with this game". The file goes from the page to the Bit; it
 isn't uploaded anywhere. Don't tick "Erase device" with "Replace the game only": that erases
