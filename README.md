@@ -29,7 +29,8 @@ through the menus, then an autopilot plays the first level for 20 seconds.
   its default (white, green, navy) for all others.
 - **Speed**: real Game Boy speed, 59.73 frames per second, on Walnut-CGB's dual-fetch CPU core.
   The emulator has one of the ESP32-S3's two cores; the scaling runs on the other. Its hot
-  helpers run from internal RAM.
+  helpers run from internal RAM, and in a scene too heavy for full speed it draws only every other
+  frame, so the game itself keeps its speed.
 - **Sound**: the two square-wave channels, tracked from the game's register writes (frequency,
   trigger, length, volume envelope, master volume), with the loudest one played on the buzzer.
   Melodies and many effects come through; the wave and noise channels (bass, drums) and the sweep
@@ -125,9 +126,10 @@ idf.py -p /dev/ttyACM0 flash monitor
 ```
 
 `idf.py flash` writes the emulator and the game (`roms/tobudx.gb`, or `-DGB_ROM=...`) and keeps
-the save partition. `idf.py monitor` prints `CPU load: N% (scaler on core 1: M%)` every second:
-the first core's time (emulation, sending frames) as a share of the Game Boy's frame time, which
-must stay under 100% for full speed, then the second core's (scaling).
+the save partition. `idf.py monitor` prints `CPU load: N% (scaler on core 1: M%), F frames shown`
+every second: the first core's time (emulation, sending frames) as a share of the Game Boy's frame
+time, which must stay under 100% for full speed, then the second core's (scaling), then how many of
+the 60 frames were shown (fewer: skipped to keep up, or the game turned its screen off).
 `idf.py -DGB_OPT_SIZE=ON build` builds the emulator for size (`-Os`) instead, to compare.
 
 - `walnut-cgb/`: git submodule, [Mr-PauI/Walnut-CGB](https://github.com/Mr-PauI/Walnut-CGB),

@@ -15,7 +15,7 @@ Firmware (ESP-IDF 5.x; tested with v5.4.1 in `~/esp/esp-idf`):
 . ~/esp/esp-idf/export.sh
 idf.py build                           # GB_ROM defaults to roms/tobudx.gb
 idf.py -DGB_ROM=path/game.gbc build    # another bundled game (≤ 4 MB; relative to the project dir)
-idf.py -p /dev/ttyACM0 flash monitor   # prints "CPU load: N% (scaler on core 1: M%)" every second
+idf.py -p /dev/ttyACM0 flash monitor   # prints "CPU load: N% (scaler on core 1: M%), F frames shown" every second
 idf.py merge-bin -o cgb-bit-merged.bin # -> build/cgb-bit-merged.bin, the release image
 ```
 
@@ -137,6 +137,11 @@ upstream). Check with `xtensa-esp32s3-elf-nm -C build/cgb-bit.elf`: they must be
 `-DGB_OPT_SIZE=ON` builds main.cpp with `-Os` (an experiment to measure: main.cpp's code 65.3 KB →
 57.1 KB, `__gb_step_cpu` 30.5 KB → 27.3 KB, still near the 32 KB instruction cache). A cache
 variable like `GB_ROM`: it sticks in `build/` until `-DGB_OPT_SIZE=OFF`.
+
+When the main loop is behind schedule it sets `gb.direct.frame_skip`: Walnut-CGB then draws only
+every other frame (whole frames, so the 5-line groups stay intact) until caught up. Drawing never
+changes the game; the smoke test checks that (sound, cartridge RAM, work RAM and I/O registers
+match frame by frame with and without skipping).
 
 ## Flash layout (`partitions.csv`) and its coupling
 

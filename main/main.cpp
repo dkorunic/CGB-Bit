@@ -555,7 +555,7 @@ extern "C" void app_main(){
 	running = true;
 	MenuButton menu;
 	bool lit = false, dimmed = false;
-	uint32_t tickTime = millis(), activityTime = tickTime, busyUs = 0, frameCount = 0;
+	uint32_t tickTime = millis(), activityTime = tickTime, busyUs = 0, frameCount = 0, shown = 0;
 	int64_t next = esp_timer_get_time();
 	while(true){
 		const uint32_t now = millis();
@@ -620,6 +620,7 @@ extern "C" void app_main(){
 			drawLowBattery(now);
 			lcd.pushImageDMA(0, 0, Screen, Screen, (const lgfx::swap565_t*) frame);
 			frame = frame == frames[0] ? frames[1] : frames[0];
+			shown++;
 			if(!lit){
 				lit = true;
 				backlightFade(blFull);
@@ -627,12 +628,13 @@ extern "C" void app_main(){
 		}
 
 		// Shown by `idf.py monitor`, in % of the frame time budget: core 0 (emulation, each line's
-		// colours, sending frames) and core 1 (scaleTask: the scaler).
+		// colours, sending frames) and core 1 (scaleTask: the scaler); then the frames shown of 60
+		// (fewer: skipped to keep up, or the game had the LCD off).
 		busyUs += esp_timer_get_time() - start;
 		if(++frameCount % 60 == 0){
-			printf("CPU load: %d%% (scaler on core 1: %d%%)\n", (int) (busyUs * 100 / (60 * FrameUs)),
-				(int) (scaleBusyUs.exchange(0) * 100 / (60 * FrameUs)));
-			busyUs = 0;
+			printf("CPU load: %d%% (scaler on core 1: %d%%), %d frames shown\n", (int) (busyUs * 100 / (60 * FrameUs)),
+				(int) (scaleBusyUs.exchange(0) * 100 / (60 * FrameUs)), (int) shown);
+			busyUs = shown = 0;
 		}
 
 		// Real Game Boy speed. Always yield at least a tick, so the idle task feeds the task watchdog;
@@ -640,6 +642,9 @@ extern "C" void app_main(){
 		next += FrameUs;
 		const int64_t wait = next - esp_timer_get_time();
 		if(wait < -3 * FrameUs) next = esp_timer_get_time();
+		// Behind: Walnut-CGB draws only every other frame (the screen keeps the last one) until caught
+		// up, so a heavy scene keeps the game at full speed. Drawing doesn't change how the game runs.
+		gb.direct.frame_skip = wait < 0;
 		vTaskDelay(std::max<TickType_t>(1, pdMS_TO_TICKS(std::max<int64_t>(0, wait) / 1000))); // wait < 0: behind
 	}
 }

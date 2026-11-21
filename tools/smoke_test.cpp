@@ -22,7 +22,7 @@ static void audio_write(uint16_t addr, uint8_t val){ apu.write(addr, val); }
 static Scaler scaler;
 static std::vector<uint8_t> romData, cartRam; // cartRam: the game's own size, as in main.cpp
 static Rom rom;
-static int linesThisFrame, errors, ramWrites;
+static int linesThisFrame, errors, ramWrites, skippedFrames;
 
 // As in main.cpp, except that cart RAM accesses out of range are failures here, not 0xFF.
 static uint8_t romRead(gb_s*, const uint_fast32_t addr){ return rom.read8(addr); }
@@ -376,19 +376,35 @@ int main(int argc, char** argv){
 	CHECK(stateParts(gb, apu, cartRam.data(), cartRam.size(), [&](size_t at, void* p, size_t n){ memcpy(&state[at], p, n); return true; }));
 	static Scaler screen;
 	screen = scaler; // the screen isn't in a state, the firmware just draws the next frame
-	auto playOn = [&](gb_s& g){
+	// Per frame: the game (sound, cartridge RAM, work RAM, I/O registers) and the picture; skip: skip
+	// drawing frames now and then, as the firmware does when behind.
+	auto playOn = [&](gb_s& g, bool skip = false, bool picture = true){
 		std::vector<uint64_t> hashes;
 		srand(2);
 		for(int frame = 0; frame < 600; frame++){
 			g.direct.joypad = ~(rand() & (JOYPAD_A | JOYPAD_B | JOYPAD_LEFT | JOYPAD_RIGHT));
+			g.direct.frame_skip = skip && frame % 50 < 20; // on and off, as being behind comes and goes
+			linesThisFrame = 0;
 			gb_run_frame_dualfetch(&g);
+			CHECK(linesThisFrame == 0 || linesThisFrame == LCD_HEIGHT); // skipped whole, for the ring of groups
+			skippedFrames += linesThisFrame == 0;
 			apu.tick(16743);
 			uint64_t h = 1469598103934665603u ^ apu.output().hz ^ uint64_t(apu.output().level) << 32;
-			for(const auto* p = (const uint8_t*) scaler.out; p < (const uint8_t*) scaler.out + sizeof(scaler.out); p++) h = (h ^ *p) * 1099511628211u;
-			for(uint8_t b : cartRam) h = (h ^ b) * 1099511628211u;
+			auto mix = [&](const void* data, size_t n){
+				for(const auto* p = (const uint8_t*) data; p < (const uint8_t*) data + n; p++) h = (h ^ *p) * 1099511628211u;
+			};
+			mix(cartRam.data(), cartRam.size());
+			mix(g.wram, sizeof(g.wram));
+			mix(g.hram_io, sizeof(g.hram_io));
+			if(picture) mix(scaler.out, sizeof(scaler.out));
 			hashes.push_back(h);
 		}
 		return hashes;
+	};
+	auto restore = [&](gb_s& g){
+		apu = ToneApu();
+		std::fill(cartRam.begin(), cartRam.end(), 0xAA);
+		return loadState(g, apu, cartRam.data(), cartRam.size(), [&](size_t at, void* p, size_t n){ memcpy(p, &state[at], n); return true; });
 	};
 	const auto expected = playOn(gb);
 	static gb_s resumed;
@@ -396,12 +412,21 @@ int main(int argc, char** argv){
 	gb_init_lcd(&resumed, drawLine);
 	int marker;
 	resumed.direct.priv = &marker; // this boot's: kept, not the state's (null)
-	apu = ToneApu();
-	std::fill(cartRam.begin(), cartRam.end(), 0xAA);
 	scaler = screen;
-	CHECK(loadState(resumed, apu, cartRam.data(), cartRam.size(), [&](size_t at, void* p, size_t n){ memcpy(p, &state[at], n); return true; }));
+	CHECK(restore(resumed));
 	CHECK(resumed.direct.priv == &marker && resumed.display.lcd_draw_line == drawLine && resumed.gb_cart_ram_write == ramWrite);
 	CHECK(playOn(resumed) == expected);
 	printf("resumed state (%zu bytes) plays on identically\n", state.size());
+
+	// Skipping frames only skips drawing them: the game plays on exactly as with every frame drawn.
+	CHECK(restore(resumed));
+	skippedFrames = 0;
+	const auto skipped = playOn(resumed, true, false);
+	const int notDrawn = skippedFrames; // skipped, or the game had the LCD off
+	CHECK(restore(resumed));
+	skippedFrames = 0;
+	CHECK(playOn(resumed, false, false) == skipped);
+	CHECK(notDrawn - skippedFrames > 100);
+	printf("skipping %d of 600 frames leaves the game unchanged\n", notDrawn - skippedFrames);
 	printf("smoke test passed\n");
 }
