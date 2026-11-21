@@ -1,5 +1,6 @@
 """Turns tools/demo's raw RGB565 frames into demo.gif: 2x nearest-neighbour, each frame with its own
-best 256-colour palette (exact when a frame has no more colours than that)."""
+best 256-colour palette (exact when a frame has no more colours than that). make_demo.sh then shrinks
+it with gifsicle."""
 import sys
 from PIL import Image
 
@@ -19,5 +20,5 @@ for i in range(0, len(data), W * H * 2):
     img = Image.frombytes('RGB', (W, H), bytes(rgb)).quantize(256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
     frames.append(img.resize((W * SCALE, H * SCALE), Image.NEAREST))
 
-frames[0].save(out_path, save_all=True, append_images=frames[1:], duration=50, loop=0, optimize=False)
+frames[0].save(out_path, save_all=True, append_images=frames[1:], duration=50, loop=0)
 print(f'{out_path}: {len(frames)} frames')

@@ -12,11 +12,11 @@ with [Tobu Tobu Girl Deluxe](roms/README.md), a free homebrew game, and plays yo
 **[Install from your browser](https://dkorunic.github.io/CGB-Bit/)**: desktop Chrome, Edge or
 Opera and a USB-C cable, nothing to install. The same page flashes your own games.
 
-![Tobu Tobu Girl Deluxe on the Bit, in colour: title, main menu, bouncing between bats](demo.gif)
+![Tobu Tobu Girl Deluxe on the Bit, in colour: title, main menu, then climbing the first level from bat to bat into the clouds](demo.gif)
 
 What the Bit's 128x128 screen shows, at 2x size and 20 FPS: rendered on the PC by
-`tools/make_demo.sh` through the firmware's own emulator setup and scaler, playing a scripted run
-(`tools/demo.cpp`).
+`tools/make_demo.sh` through the firmware's own emulator setup and scaler. `tools/demo.cpp` presses
+through the menus, then an autopilot plays the first level for 20 seconds.
 
 ## What you get
 
@@ -140,15 +140,16 @@ must stay under 100% for full speed, then the second core's (scaling).
 
 ## Development
 
-PC tools, needing a C++20 compiler, `patch` and (for the GIF) Python with Pillow, but not
-ESP-IDF. Run them from a normal shell: the ESP-IDF shell's Python has no Pillow.
+PC tools, needing a C++20 compiler, `patch` and (for the GIF) Python with Pillow and gifsicle,
+but not ESP-IDF. Run them from a normal shell: the ESP-IDF shell's Python has no Pillow.
 
 - `tools/smoke_test.sh [game.gbc]`: checks the scaler (including the firmware's two-core split),
   the sound tracker, saves, the patched MBC2/rumble cartridge RAM, the original-game palettes and
   the Menu button, then plays a minute of the game (default: Tobu Tobu Girl Deluxe, in Game Boy
   Color mode) under ASan/UBSan and checks a save state resumes into exactly the same game.
 - `tools/make_demo.sh`: regenerates `demo.gif`. The run is scripted in frames for Tobu Tobu Girl
-  Deluxe.
+  Deluxe, with an autopilot for the level that reads the emulated sprites, so it comes out the
+  same every time.
 - `web/build.sh <dir> <cgb-bit-merged.bin> <version>`: assembles the browser installer site: the
   firmware (the merged image cut at the `rom` partition) and the bundled game as separate parts,
   so the page can put a player's game in the bundled one's place. It fails if the merged image

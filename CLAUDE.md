@@ -28,7 +28,7 @@ PC tools (no ESP-IDF needed; run them from a plain shell, the ESP-IDF shell's Py
 tools/smoke_test.sh [game.gbc]       # front-end unit checks + 1 emulated minute under ASan/UBSan
 node --test web/gb.test.mjs          # installer ROM checks + manifests
 node --test --test-name-pattern "accepts" web/gb.test.mjs   # a single web test
-tools/make_demo.sh                   # regenerates demo.gif (needs Pillow)
+tools/make_demo.sh                   # regenerates demo.gif (needs Pillow and gifsicle)
 web/build.sh <out dir> build/cgb-bit-merged.bin <version>   # assemble the installer site
 ```
 
@@ -168,8 +168,20 @@ Dependabot updates them and the `walnut-cgb` submodule weekly.
 
 ## Conventions
 
-- `demo.cpp`'s input script is frame-counted for Tobu Tobu Girl Deluxe (`roms/tobudx.gb`); changing
-  the bundled game or anything affecting gameplay timing may need it retuned (check frames with a
-  contact sheet before regenerating `demo.gif`).
+- `demo.cpp`'s input script is frame-counted for Tobu Tobu Girl Deluxe (`roms/tobudx.gb`); its last
+  step (`Auto`) hands the level to `autopilot()`, which reads the girl, enemies and hazards from OAM
+  by tile (`entity_sprites` in the game's `game.c`) and follows its rules: bounce only by falling
+  onto an enemy, dash up (A + Up) at the top of a rise when an enemy above can catch her, boost (B)
+  when nothing below is in reach. Deterministic, but the run is only checked up to frame 2490 (she
+  misses a landing soon after), so changing the bundled game, the autopilot or anything affecting
+  gameplay timing needs the run checked again: contact sheets of the raw frames, before
+  regenerating `demo.gif`.
+- GIF workflow (`tools/make_demo.sh`): `demo.cpp` writes raw 128x128 RGB565 frames (every 3rd
+  Game Boy frame, 20 FPS); `make_demo_gif.py` turns them into an exact GIF at 2x (a 256-colour
+  palette per frame); `gifsicle --no-warnings -O3 --colors 256` writes `demo.gif` with one shared
+  palette, which lets it make unchanged pixels transparent: 2.18 MB → 1.36 MB, ~14% of pixels
+  get a close colour instead (the scaler's blends), not visible side by side. Further `--lossy`
+  gains under 1%. Output is deterministic (same md5 run to run). Keep `demo.gif` small (~1.5 MB)
+  for the README; to judge a change, compare frames of the exact and final GIFs side by side.
 - Bundled ROMs must be redistributable; `roms/README.md` records source, licences and SHA-256.
 - Repository code is CC0; third-party parts keep their licences (see README "License").
