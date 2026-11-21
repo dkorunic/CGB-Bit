@@ -1,0 +1,66 @@
+Upstream PR https://github.com/Mr-PauI/Walnut-CGB/pull/8 (MBC5+RUMBLE carts had no RAM, and the
+rumble motor bit selected RAM banks past the cart's RAM). Applies on top of 01. Drop this file
+once the walnut-cgb submodule includes it.
+
+From 82cdc2985b670ec229b1a8a8d83af2c628a69875 Mon Sep 17 00:00:00 2001
+From: Dinko Korunic <dinko.korunic@gmail.com>
+Date: Sat, 21 Nov 2026 10:31:15 +0000
+Subject: [PATCH 2/2] Enable cartridge RAM for MBC5+RUMBLE carts
+
+cart_ram[] had 0 for cart types 0x1D (MBC5+RUMBLE+RAM) and 0x1E
+(MBC5+RUMBLE+RAM+BATTERY), so their RAM was disabled and battery saves
+were lost. Set both to 1.
+
+On rumble carts bit 3 of the RAM bank register drives the motor and is
+not a bank bit, so with RAM enabled it would select banks 8-15, beyond
+the cart's RAM. Track rumble carts in cart_is_rumble and keep only bits
+0-2 of the RAM bank number for them.
+---
+ walnut_cgb.h | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/walnut_cgb.h b/walnut_cgb.h
+index e5b5664..37c9138 100644
+--- a/walnut_cgb.h
++++ b/walnut_cgb.h
+@@ -744,6 +744,8 @@ struct gb_s
+ 		bool lcd_blank	: 1;
+ 		/* Set if MBC3O cart is used. */
+ 		bool cart_is_mbc3O : 1;
++		/* Set if MBC5 cart with a rumble motor is used. */
++		bool cart_is_rumble : 1;
+ 	};
+ 
+ 	/* Cartridge information:
+@@ -1770,7 +1772,7 @@ void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
+ 		}
+ 
+ 		else if(gb->mbc == 5)
+-			gb->cart_ram_bank = (val & 0x0F);
++			gb->cart_ram_bank = val & (gb->cart_is_rumble ? 0x07 : 0x0F);
+ #if WALNUT_GB_SAFE_DUALFETCH_MBC
+ 		gb->prefetch_invalid=true;
+ #endif
+@@ -7636,7 +7638,7 @@ enum gb_init_error_e gb_init(struct gb_s *gb,
+ 	const uint8_t cart_ram[] =
+ 	{
+ 		0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0,
+-		1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0
++		1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0
+ 	};
+ 	/* How large the ROM is in banks of 16 KiB. */
+ 	const uint16_t num_rom_banks_mask[] =
+@@ -7705,6 +7707,10 @@ enum gb_init_error_e gb_init(struct gb_s *gb,
+ 	if(gb->mbc == 3)
+ 		gb->cart_is_mbc3O = gb->num_rom_banks_mask > 128 || gb->num_ram_banks > 4;
+ 
++	/* MBC5+RUMBLE carts (0x1C-0x1E) use bit 3 of the RAM bank number
++	 * for the rumble motor. */
++	gb->cart_is_rumble = gb->mbc == 5 && gb_rom_read(gb, mbc_location) >= 0x1C;
++
+ 	/* Note that MBC2 will appear to have no RAM banks, but it actually
+ 	 * always has 512 half-bytes of RAM. Hence, gb->num_ram_banks must be
+ 	 * ignored for MBC2. */
+-- 
+2.47.3
+

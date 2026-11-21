@@ -1,0 +1,4 @@
+dependencies:
+  lovyangfx:
+    git: https://github.com/lovyan03/LovyanGFX.git
+    version: "1.2.36"

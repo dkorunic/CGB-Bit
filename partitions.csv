@@ -1,0 +1,8 @@
+# rom: the game, memory-mapped and read in place. saves: the cartridge's battery RAM in two
+# alternating slots (each a header sector + up to 128 KB).
+# Name,    Type, SubType, Offset, Size
+nvs,       data, nvs,     ,       0x6000,
+phy_init,  data, phy,     ,       0x1000,
+factory,   app,  factory, ,       1M,
+rom,       data, 0x40,    ,       4M,
+saves,     data, 0x41,    ,       264K,

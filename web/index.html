@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CGB-Bit: install</title>
+<meta name="description" content="Flash CGB-Bit, a Game Boy and Game Boy Color emulator, onto a CircuitMess Bit from the browser.">
+<!-- ESP Web Tools (built on Espressif's esptool-js), served from this site by web/build.sh -->
+<script type="module" src="esp-web-tools/install-button.js"></script>
+<style>
+  :root { --bg: #f6f5f2; --fg: #1d1d1f; --muted: #5d5d63; --card: #fff; --line: #dedcd6; --accent: #b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141416; --fg: #ececee; --muted: #a2a2aa; --card: #1d1d21; --line: #2e2e34; --accent: #ff6b5e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .demo { display: block; width: 256px; max-width: 100%; height: auto; image-rendering: pixelated; border-radius: 6px; margin: 0 auto 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+  ol { margin: 0; padding-left: 1.3em; }
+  li + li { margin-top: 6px; }
+  .install { text-align: center; margin: 8px 0 20px; }
+  .warn { color: var(--accent); }
+  a { color: inherit; }
+  code { font-size: 0.9em; }
+  .btn { font: inherit; font-weight: 600; border: 0; border-radius: 6px; padding: 10px 16px; cursor: pointer; background: #03a9f4; color: #fff; }
+  .btn.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  .game input[type=file] { font: inherit; max-width: 100%; }
+  .game .buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+  [hidden] { display: none !important; } /* or display: flex above would show hidden buttons */
+  .error { color: var(--accent); }
+  h2 { font-size: 1.15rem; margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>CGB-Bit: Game Boy Color on the CircuitMess Bit</h1>
+  <p class="sub">Game Boy and Game Boy Color games on the Bit, flashed straight from your browser, with <em>Tobu Tobu Girl Deluxe</em> to play out of the box. Version <span id="version">…</span>.</p>
+
+  <img class="demo" src="demo.gif" width="256" height="256" alt="Tobu Tobu Girl Deluxe on the Bit, in colour: title, main menu, bouncing between bats">
+
+  <div class="card">
+    <ol>
+      <li>Use desktop <strong>Chrome, Edge or Opera</strong> (they have Web Serial; Firefox and Safari don't).</li>
+      <li>Connect the Bit with a USB-C data cable and switch it on.</li>
+      <li>Press <strong>Connect</strong>, pick the Bit's serial port, then <strong>Install</strong>.
+        Leave <strong>Erase device</strong> unticked to keep your saves.</li>
+      <li>When it's done, switch the Bit off and on.</li>
+    </ol>
+  </div>
+
+  <div class="install">
+    <esp-web-install-button manifest="manifest.json">
+      <span slot="unsupported">Your browser can't flash devices. Open this page in desktop Chrome, Edge or Opera.</span>
+      <span slot="not-allowed">Flashing needs a secure (https) page.</span>
+    </esp-web-install-button>
+  </div>
+
+  <div class="card game">
+    <h2>Your own game</h2>
+    <p>Pick a Game Boy or Game Boy Color game (<code>.gb</code>, <code>.gbc</code>, up to 4 MB) on your computer: homebrew (the
+      <a href="https://hh.gbdev.io/">Homebrew Hub</a> lists many free ones) or a dump of a cartridge you own.
+      It's checked here first and goes straight from this page to the Bit; it isn't uploaded anywhere.</p>
+    <input type="file" id="rom" accept=".gb,.gbc">
+    <p id="romInfo" role="status" aria-live="polite"></p>
+    <div class="buttons" id="romButtons" hidden>
+      <esp-web-install-button id="gameOnly">
+        <button class="btn" slot="activate">Replace the game only</button>
+        <span slot="unsupported">Your browser can't flash devices: use desktop Chrome, Edge or Opera.</span>
+        <span slot="not-allowed">Flashing needs a secure (https) page.</span>
+      </esp-web-install-button>
+      <esp-web-install-button id="withFirmware">
+        <button class="btn secondary" slot="activate">Install CGB-Bit with this game</button>
+        <span slot="unsupported">Your browser can't flash devices: use desktop Chrome, Edge or Opera.</span>
+        <span slot="not-allowed">Flashing needs a secure (https) page.</span>
+      </esp-web-install-button>
+    </div>
+    <p style="margin-bottom:0"><small>"Replace the game only" needs CGB-Bit on the Bit already and keeps it;
+      "Install CGB-Bit with this game" also (re)installs CGB-Bit itself.
+      <strong class="warn">With "Replace the game only", don't tick "Erase device":</strong> that erases CGB-Bit
+      too and leaves the Bit without firmware (fix it with either install button).</small></p>
+  </div>
+
+  <div class="card">
+    <p class="warn" style="margin-top:0"><strong>This replaces the Bit's stock firmware</strong> (or the game already on it).</p>
+    <p>Installing keeps the save unless you tick "Erase device". A game only ever loads its own save. The Bit
+      has room for one game's save: once a different game has saved twice, the previous game's save is gone.</p>
+    <p>Bundled game: <em>Tobu Tobu Girl Deluxe</em> by Tangram Games (code MIT, assets <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).</p>
+    <p style="margin-bottom:0">Back to stock: flash the image from the
+      <a href="https://github.com/CircuitMess/Bit-Firmware/releases">Bit-Firmware releases</a>.
+      Source, controls and other ways to flash:
+      <a href="https://github.com/dkorunic/CGB-Bit">github.com/dkorunic/CGB-Bit</a>.</p>
+  </div>
+</main>
+<script type="module">
+  import { checkRom, manifestFor } from "./gb.js";
+
+  const version = document.getElementById("version");
+  const info = document.getElementById("romInfo");
+  const buttons = document.getElementById("romButtons");
+  let template, urls = [], pick = 0;
+  try {
+    template = await (await fetch("manifest.json")).json();
+    version.textContent = template.version;
+  } catch {
+    version.textContent = "unknown";
+  }
+
+  // A player's .gb file: checked like the firmware will, then flashed from a blob: URL into the
+  // rom partition, alone or after the firmware. Header values are shown as text, never as HTML.
+  async function useFile(file) {
+    const mine = ++pick; // a later pick wins, even if this one's file finishes reading last
+    urls.forEach((u) => URL.revokeObjectURL(u));
+    urls = [];
+    buttons.hidden = true;
+    info.className = "";
+    try {
+      if (!template) throw new Error("The installer couldn't load its manifest: reload the page.");
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (mine !== pick) return;
+      const { title, size } = checkRom(bytes, template.rom_size);
+      const padded = new Uint8Array(size).fill(0xFF);
+      padded.set(bytes);
+      const game = URL.createObjectURL(new Blob([padded]));
+      urls.push(game);
+      for (const [id, withFirmware] of [["gameOnly", false], ["withFirmware", true]]) {
+        const manifest = manifestFor(template, game, title, withFirmware, location.href);
+        const url = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: "application/json" }));
+        urls.push(url);
+        document.getElementById(id).setAttribute("manifest", url);
+      }
+      info.textContent = `${title}, ${Math.ceil(size / 1024)} KB: ready to flash.`;
+      buttons.hidden = false;
+    } catch (e) {
+      if (mine !== pick) return;
+      info.className = "error";
+      info.textContent = e.message;
+    }
+  }
+
+  document.getElementById("rom").addEventListener("change", (e) => {
+    if (e.target.files.length) useFile(e.target.files[0]);
+  });
+  window.gbBit = { useFile }; // for tests
+</script>
+</body>
+</html>

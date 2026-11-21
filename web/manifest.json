@@ -1,0 +1,15 @@
+{
+  "name": "CGB-Bit (Game Boy and Game Boy Color for CircuitMess Bit)",
+  "version": "dev",
+  "rom_size": 4194304,
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        { "path": "cgb-bit-firmware.bin", "offset": 0 },
+        { "path": "tobudx.gb", "offset": 1114112 }
+      ]
+    }
+  ]
+}

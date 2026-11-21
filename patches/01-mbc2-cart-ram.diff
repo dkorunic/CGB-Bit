@@ -1,0 +1,36 @@
+Upstream PR https://github.com/Mr-PauI/Walnut-CGB/pull/7 (MBC2 games could neither use nor save
+their built-in RAM). Drop this file once the walnut-cgb submodule includes it.
+
+From 9645d1343392c467f1254c84c608dd2220f5a128 Mon Sep 17 00:00:00 2001
+From: Dinko Korunic <dinko.korunic@gmail.com>
+Date: Sat, 21 Nov 2026 10:29:46 +0000
+Subject: [PATCH 1/2] Keep MBC2 cartridge RAM enabled in gb_init
+
+MBC2 has its 512x4-bit RAM built in, so MBC2 headers declare a RAM size
+of 0. gb_init cleared cart_ram whenever num_ram_banks was 0, which made
+the MBC2 RAM paths in __gb_read/__gb_write unreachable: MBC2 games could
+neither use nor save their RAM. Exempt MBC2 from that check, as the note
+further down in gb_init says num_ram_banks must be ignored for MBC2.
+---
+ walnut_cgb.h | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/walnut_cgb.h b/walnut_cgb.h
+index 822511e..e5b5664 100644
+--- a/walnut_cgb.h
++++ b/walnut_cgb.h
+@@ -7692,8 +7692,9 @@ enum gb_init_error_e gb_init(struct gb_s *gb,
+ 	gb->num_ram_banks = num_ram_banks[gb_rom_read(gb, ram_size_location)];
+ 
+ 	/* If the ROM says that it support RAM, but has 0 RAM banks, then
+-	 * disable RAM reads from the cartridge. */
+-	if(gb->cart_ram == 0 || gb->num_ram_banks == 0)
++	 * disable RAM reads from the cartridge. MBC2 always reports 0 RAM
++	 * banks for its built-in RAM, so it is exempt. */
++	if(gb->cart_ram == 0 || (gb->num_ram_banks == 0 && gb->mbc != 2))
+ 	{
+ 		gb->cart_ram = 0;
+ 		gb->num_ram_banks = 0;
+-- 
+2.47.3
+

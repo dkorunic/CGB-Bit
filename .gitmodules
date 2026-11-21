@@ -1,0 +1,3 @@
+[submodule "walnut-cgb"]
+	path = walnut-cgb
+	url = https://github.com/Mr-PauI/Walnut-CGB.git

@@ -1,0 +1,95 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Actions are pinned to commit SHAs (version in the comment) so a moved tag can't change what runs;
+# Dependabot keeps them current.
+jobs:
+  smoke-test:
+    name: Tests (game under ASan/UBSan, web installer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - run: tools/smoke_test.sh
+      - run: node --test web/gb.test.mjs
+
+  firmware:
+    name: Firmware
+    needs: smoke-test
+    runs-on: ubuntu-latest
+    container: espressif/idf@sha256:6b4adab7b282e9261a154d7130fb4945a3c28bd35c2e914357c2f522643cb92a # espressif/idf:v5.4.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - name: Build
+        shell: bash
+        run: |
+          command -v patch >/dev/null || { apt-get update && apt-get install -y --no-install-recommends patch; }
+          . "$IDF_PATH/export.sh"
+          idf.py build
+          idf.py merge-bin -o cgb-bit-merged.bin
+          cp build/cgb-bit-merged.bin build/cgb-bit.bin .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cgb-bit-firmware
+          path: |
+            cgb-bit-merged.bin
+            cgb-bit.bin
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the only job that can write: attaches the binaries to the release
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cgb-bit-firmware
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          generate_release_notes: true
+          files: |
+            cgb-bit-merged.bin
+            cgb-bit.bin
+
+  pages:
+    name: Browser installer (GitHub Pages)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # job permissions replace the workflow's: checkout still needs this
+      pages: write # the only job that can deploy the site
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cgb-bit-firmware
+          path: firmware
+      - name: Build site
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: web/build.sh site firmware/cgb-bit-merged.bin "$VERSION"
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
